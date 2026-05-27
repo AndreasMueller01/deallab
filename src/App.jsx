@@ -168,6 +168,12 @@ const LeadGate = ({ onSuccess }) => {
     // different domain — fetch() gets blocked by CORS, but a native form submission
     // targeting a hidden iframe works because browsers allow cross-origin form posts.
     try {
+      // Split the full name into first/last for Jotform's compound name field
+      const trimmedName = name.trim();
+      const nameParts = trimmedName.split(/\s+/);
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
       // Create the hidden iframe that will receive the submission response
       const iframeName = `jf_target_${Date.now()}`;
       const iframe = document.createElement('iframe');
@@ -183,31 +189,17 @@ const LeadGate = ({ onSuccess }) => {
       form.style.display = 'none';
       form.acceptCharset = 'utf-8';
 
-      // Add all field variants Jotform might be expecting.
-      // Jotform forms with 3 user-facing fields (name, email, phone) typically
-      // use q3, q4, q5 — but it varies. We cover all common possibilities.
+      // Exact field names from this Jotform form's Advanced tab.
+      // Full name is a compound field with first/last sub-fields.
       const fields = {
-        // Most common pattern for our form
-        q3_fullName: name,
-        q4_email4: email,
-        q5_phoneNumber: phone,
-        'q5_phoneNumber[full]': phone,
-        // Alternate numbering
-        q1_fullName: name,
-        q2_email: email,
-        q3_phoneNumber: phone,
-        'q3_phoneNumber[full]': phone,
-        q4_phoneNumber: phone,
-        'q4_phoneNumber[full]': phone,
-        // Simpler aliases
-        fullName: name,
-        email: email,
-        phoneNumber: phone,
-        phone: phone,
-        name: name,
-        // Required Jotform meta
+        'q2_fullname0[first]': firstName,
+        'q2_fullname0[last]': lastName,
+        'q3_email1': email,
+        'q4_phone2[full]': phone,
+        'q4_phone2': phone,
+        // Required Jotform meta fields
         formID: JOTFORM_ID,
-        website: '', // honeypot
+        website: '', // honeypot — must be empty
         simple_spc: `${JOTFORM_ID}-${JOTFORM_ID}`,
       };
 
