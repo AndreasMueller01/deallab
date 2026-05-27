@@ -163,44 +163,85 @@ const LeadGate = ({ onSuccess }) => {
     setError('');
     setSubmitting(true);
 
+    // Submit to Jotform using a hidden iframe + form technique.
+    // This is the only reliable way to submit to Jotform from a custom UI on a
+    // different domain — fetch() gets blocked by CORS, but a native form submission
+    // targeting a hidden iframe works because browsers allow cross-origin form posts.
     try {
-      // Submit to Jotform — include every common field-name variant so it works
-      // regardless of how Jotform numbered the fields.
-      const formData = new FormData();
-      // Standard Jotform field names (form ID 261466092010044 has Full Name, Email, Phone)
-      formData.append('q3_fullName', name);
-      formData.append('q4_email4', email);
-      formData.append('q5_phoneNumber[full]', phone);
-      formData.append('q5_phoneNumber', phone);
-      // Alternate numbering Jotform sometimes uses
-      formData.append('q1_fullName', name);
-      formData.append('q2_email', email);
-      formData.append('q3_phoneNumber[full]', phone);
-      formData.append('q4_phoneNumber[full]', phone);
-      // Plain field names as a final fallback
-      formData.append('fullName', name);
-      formData.append('email', email);
-      formData.append('phoneNumber', phone);
-      formData.append('phone', phone);
-      formData.append('name', name);
-      // Required Jotform meta fields
-      formData.append('formID', JOTFORM_ID);
-      formData.append('website', ''); // honeypot
+      // Create the hidden iframe that will receive the submission response
+      const iframeName = `jf_target_${Date.now()}`;
+      const iframe = document.createElement('iframe');
+      iframe.name = iframeName;
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
 
-      await fetch(`https://submit.jotform.com/submit/${JOTFORM_ID}`, {
-        method: 'POST',
-        body: formData,
-        mode: 'no-cors',
+      // Create the hidden form
+      const form = document.createElement('form');
+      form.action = `https://submit.jotform.com/submit/${JOTFORM_ID}`;
+      form.method = 'POST';
+      form.target = iframeName;
+      form.style.display = 'none';
+      form.acceptCharset = 'utf-8';
+
+      // Add all field variants Jotform might be expecting.
+      // Jotform forms with 3 user-facing fields (name, email, phone) typically
+      // use q3, q4, q5 — but it varies. We cover all common possibilities.
+      const fields = {
+        // Most common pattern for our form
+        q3_fullName: name,
+        q4_email4: email,
+        q5_phoneNumber: phone,
+        'q5_phoneNumber[full]': phone,
+        // Alternate numbering
+        q1_fullName: name,
+        q2_email: email,
+        q3_phoneNumber: phone,
+        'q3_phoneNumber[full]': phone,
+        q4_phoneNumber: phone,
+        'q4_phoneNumber[full]': phone,
+        // Simpler aliases
+        fullName: name,
+        email: email,
+        phoneNumber: phone,
+        phone: phone,
+        name: name,
+        // Required Jotform meta
+        formID: JOTFORM_ID,
+        website: '', // honeypot
+        simple_spc: `${JOTFORM_ID}-${JOTFORM_ID}`,
+      };
+
+      Object.entries(fields).forEach(([key, value]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
       });
 
+      document.body.appendChild(form);
+      form.submit();
+
+      // Clean up after a short delay (give the browser time to post)
+      setTimeout(() => {
+        try {
+          document.body.removeChild(form);
+          document.body.removeChild(iframe);
+        } catch (e) { /* already removed */ }
+      }, 3000);
+
+      // Persist access locally so user isn't re-prompted on this device.
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({
           name, email, phone, ts: Date.now()
         }));
       } catch (e) { /* localStorage may be unavailable */ }
 
-      setSubmitting(false);
-      onSuccess({ name, email, phone });
+      // Small delay so the user sees the loading state briefly
+      setTimeout(() => {
+        setSubmitting(false);
+        onSuccess({ name, email, phone });
+      }, 800);
     } catch (e) {
       setSubmitting(false);
       setError('Something went wrong. Please try again.');
