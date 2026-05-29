@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Flame, Home, Wrench, TrendingUp, AlertTriangle, CheckCircle2, Info, RefreshCw, DollarSign, Calculator, BarChart3, Sliders, Lock, User, Mail, Phone, ShieldCheck } from 'lucide-react';
 
 const JOTFORM_ID = '261466092010044';
@@ -148,10 +148,6 @@ const LeadGate = ({ onSuccess }) => {
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  // Track when the lead gate first mounted — used for Jotform's `timeToSubmit`
-  // anti-bot heuristic (must be > 0 for the notification renderer to populate
-  // field values; otherwise the submission is silently treated as low-trust).
-  const mountTimeRef = useRef(Date.now());
 
   const validate = () => {
     if (!name.trim() || name.trim().length < 2) return 'Please enter your full name';
@@ -193,38 +189,18 @@ const LeadGate = ({ onSuccess }) => {
       form.style.display = 'none';
       form.acceptCharset = 'utf-8';
 
-      // Field names must use Jotform's CANONICAL double-prefix form
-      // (`q{qid}_{uniqueName}[sublabel]`). Posting with the single-prefix form
-      // still stores data in the submissions table, but Jotform's notification
-      // renderer can't read it back — emails arrive with blank values.
-      // See: the hosted form at form.jotform.com/{formID} posts these exact keys.
-      const buildDate = mountTimeRef.current;
-      const submitTs = Date.now();
-      const timeToSubmitSeconds = Math.max(1, Math.round((submitTs - mountTimeRef.current) / 1000));
-      const randToken = Math.random().toString(36).slice(2, 9); // 7-char a-z0-9
-      const formOpenId = String(submitTs) + String(Math.floor(Math.random() * 1e7)).padStart(7, '0').slice(0, 4);
+      // Exact field names from this Jotform form's Advanced tab.
+      // Full name is a compound field with first/last sub-fields.
       const fields = {
-        // Data fields (canonical double-prefix)
-        'q2_q2_fullname0[first]': firstName,
-        'q2_q2_fullname0[last]': lastName,
-        'q3_q3_email1': email,
-        'q4_q4_phone2[full]': phone,
-        // Honeypot — must be empty
-        website: '',
-        // Core meta
+        'q2_fullname0[first]': firstName,
+        'q2_fullname0[last]': lastName,
+        'q3_email1': email,
+        'q4_phone2[full]': phone,
+        'q4_phone2': phone,
+        // Required Jotform meta fields
         formID: JOTFORM_ID,
+        website: '', // honeypot — must be empty
         simple_spc: `${JOTFORM_ID}-${JOTFORM_ID}`,
-        // Trust-signal hidden fields — required for Jotform's notification
-        // renderer to populate field values. The hosted form posts all of these.
-        submitSource: 'mounted',
-        buildDate: String(buildDate),
-        submitDate: 'undefined',
-        eventObserver: '1',
-        timeToSubmit: String(timeToSubmitSeconds),
-        uploadServerUrl: 'https://upload.jotform.com/upload',
-        formOpenId_V5: formOpenId,
-        event_id: `${submitTs}_${JOTFORM_ID}_${randToken}`,
-        jsExecutionTracker: `build-date-${buildDate}=>init`,
       };
 
       Object.entries(fields).forEach(([key, value]) => {
