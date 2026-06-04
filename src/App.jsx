@@ -8,10 +8,10 @@ const STORAGE_KEY = 'deallab_access_granted_v1';
 // Deal Heat Index labels per strategy (cold → on-fire). The endpoints change
 // to fit each strategy's decision: flip = build vs. walk, existing = hold vs. sell.
 const HEAT_LABELS = {
-  buyhold:  ['COLD', 'COOL', 'WARM', 'HOT', 'ON FIRE'],
-  brrrr:    ['COLD', 'COOL', 'WARM', 'HOT', 'ON FIRE'],
-  flip:     ['FORGET IT', 'COOL', 'WARM', 'HOT', 'FLIP IT!'],
-  existing: ['LIST IT', 'COOL', 'WARM', 'HOT', 'LOVE IT'],
+  buyhold:  ['PASS ON THIS DEAL!', 'COOL', 'WARM', 'HOT', 'THIS IS A BUY!'],
+  brrrr:    ['COLD AS ICE', 'COOL', 'WARM', 'HOT', "HE'S ON FIRE!"],
+  flip:     ['FORGET IT!', 'COOL', 'WARM', 'HOT', 'FLIP IT!'],
+  existing: ['LIST IT!', 'COOL', 'WARM', 'HOT', 'LOVE IT!'],
 };
 
 // Default full-renovation plan for a typical cosmetic-to-moderate flip, in build
@@ -153,19 +153,25 @@ const HeatGauge = ({ score, label, verdict, why, labels = HEAT_LABELS.buyhold })
           <Flame className="w-4 h-4 text-orange-500" />
           <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Deal Heat Index</h3>
         </div>
-        <svg viewBox="0 0 300 200" className="w-full max-w-sm mx-auto">
+        <svg viewBox="-20 0 340 200" className="w-full max-w-sm mx-auto">
           {segments.map((s, i) => (
             <path key={i} d={arc(s.from, s.to)} fill="none" stroke={s.color} strokeWidth="22" opacity="0.85" />
           ))}
           {segments.map((s, i) => {
             const mid = (s.from + s.to) / 2;
             const a = (mid / 100) * 180 - 180;
-            const lx = cx + (r + 16) * Math.cos((a * Math.PI) / 180);
-            const ly = cy + (r + 16) * Math.sin((a * Math.PI) / 180);
+            const lx = cx + (r + 20) * Math.cos((a * Math.PI) / 180);
+            const ly = cy + (r + 20) * Math.sin((a * Math.PI) / 180);
+            const boxW = s.label.length * 4.9 + 9;
+            const boxH = 13;
             return (
-              <text key={i} x={lx} y={ly} textAnchor="middle" fontSize="8" fontWeight="700" fill={s.color} opacity="0.9">
-                {s.label}
-              </text>
+              <g key={i}>
+                <rect x={lx - boxW / 2} y={ly - boxH / 2} width={boxW} height={boxH} rx="3.5"
+                  fill="#0f172a" opacity="0.88" stroke={s.color} strokeOpacity="0.35" strokeWidth="0.5" />
+                <text x={lx} y={ly} textAnchor="middle" dominantBaseline="central" fontSize="8" fontWeight="800" fill={s.color}>
+                  {s.label}
+                </text>
+              </g>
             );
           })}
           {[0, 20, 40, 60, 80, 100].map((t) => {
@@ -179,7 +185,7 @@ const HeatGauge = ({ score, label, verdict, why, labels = HEAT_LABELS.buyhold })
           <line x1={cx} y1={cy} x2={needleX} y2={needleY} stroke="#f1f5f9" strokeWidth="3" strokeLinecap="round" />
           <circle cx={cx} cy={cy} r="10" fill="#0f172a" stroke="#f1f5f9" strokeWidth="2" />
           <circle cx={cx} cy={cy} r="3" fill="#f1f5f9" />
-          <text x={cx} y={185} textAnchor="middle" fontSize="22" fontWeight="800" fill="#f1f5f9">{label}</text>
+          <text x={cx} y={185} textAnchor="middle" fontSize={label.length > 11 ? 15 : label.length > 8 ? 18 : 22} fontWeight="800" fill="#f1f5f9">{label}</text>
         </svg>
         <div className="text-center mt-2">
           <div className="text-sm font-semibold text-slate-200">{verdict}</div>
@@ -475,7 +481,6 @@ export default function App() {
     setAdvanced((a) => {
       const next = !a;
       try { localStorage.setItem('deallab_advanced_v1', next ? '1' : '0'); } catch (e) { /* ignore */ }
-      if (!next && strategy === 'existing') setStrategy('buyhold');
       return next;
     });
   };
@@ -738,20 +743,25 @@ export default function App() {
 
   // ============ EXISTING-PROPERTY CALC (hold vs sell + 1031) ============
   const existingCalc = useMemo(() => {
-    const grossAnnualRent = monthlyRent * 12 + otherIncome * 12;
-    const vacancyLoss = grossAnnualRent * (vacancyPct / 100);
+    // Stress inputs flow through so the stress sliders move these results too.
+    const effRent = monthlyRent * (1 - stressRent / 100);
+    const effVacancy = vacancyPct + stressVacancy;
+    const effRate = currentRate + stressRate;
+
+    const grossAnnualRent = effRent * 12 + otherIncome * 12;
+    const vacancyLoss = grossAnnualRent * (effVacancy / 100);
     const egi = grossAnnualRent - vacancyLoss;
     const mgmt = egi * (mgmtPct / 100);
-    const maint = monthlyRent * 12 * (maintPct / 100);
-    const capex = monthlyRent * 12 * (capexPct / 100);
+    const maint = effRent * 12 * (maintPct / 100);
+    const capex = effRent * 12 * (capexPct / 100);
     const opex = propertyTax + insurance + utilities * 12 + mgmt + maint + capex;
     const noi = egi - opex;
 
-    const mRate = currentRate / 12 / 100;
+    const mRate = effRate / 12 / 100;
     const ioMonths = Math.round(ioYears * 12);
     const amortMonths = Math.max(1, yearsRemaining * 12 - ioMonths);
     const ioPayment = currentBalance > 0 ? currentBalance * mRate : 0;
-    const amortPayment = currentBalance > 0 ? pmt(currentRate, amortMonths, currentBalance) : 0;
+    const amortPayment = currentBalance > 0 ? pmt(effRate, amortMonths, currentBalance) : 0;
     const monthlyPayment = ioMonths > 0 ? ioPayment : amortPayment;
     const annualDebtService = monthlyPayment * 12;
     const cashFlow = noi - annualDebtService;
@@ -760,24 +770,51 @@ export default function App() {
     const capRate = currentValue > 0 ? (noi / currentValue) * 100 : 0;
     const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
     const debtYield = currentBalance > 0 ? (noi / currentBalance) * 100 : null;
+    // Forward (Yr-2) cap rate on cost basis (current value), NOI grown at stabilized rate.
+    const capRateYr2 = currentValue > 0 ? (noi * Math.pow(1 + noiGrowth / 100, 2) / currentValue) * 100 : 0;
 
-    // Principal paid over the next 12 months (interest-only aware).
-    let bal = currentBalance, principalYr1 = 0;
-    for (let i = 0; i < 12 && currentBalance > 0; i++) {
-      const interest = bal * mRate;
-      if (i < ioMonths) continue;
-      const principal = amortPayment - interest;
-      bal -= principal; principalYr1 += principal;
-    }
-    principalYr1 = Math.max(0, principalYr1);
+    // Loan balance after N months (interest-only aware).
+    const balAfter = (months) => {
+      if (currentBalance <= 0) return 0;
+      let b = currentBalance;
+      for (let i = 0; i < months; i++) {
+        const interest = b * mRate;
+        if (i < ioMonths) continue;
+        b -= (amortPayment - interest);
+      }
+      return Math.max(0, b);
+    };
+    const principalYr1 = currentBalance - balAfter(12);
+    const balAfter5 = balAfter(60);
 
     const apprGain = currentValue * (apprPct / 100);
     const annualDepreciation = originalBasis * (buildingPct / 100) * (deprRate / 100);
     const deprTaxShield = annualDepreciation * (taxRate / 100);
+    const afterTaxCashFlow = cashFlow + deprTaxShield;
+    const afterTaxRoe = equity > 0 ? (afterTaxCashFlow / equity) * 100 : 0;
 
     const totalReturnHold = cashFlow + principalYr1 + apprGain + deprTaxShield;
     const roe = equity > 0 ? (totalReturnHold / equity) * 100 : 0;        // return on equity if held
     const cashOnEquity = equity > 0 ? (cashFlow / equity) * 100 : 0;
+
+    // 5-year IRR / NPV of CONTINUING TO HOLD: invest the current equity, collect
+    // stabilized cash flow, sell in Year 5 at the appreciated value net of costs.
+    const value5 = currentValue * Math.pow(1 + apprPct / 100, 5);
+    const saleNet5 = value5 * (1 - sellingCostsPct / 100) - balAfter5;
+    const annualDSForYear = (y) => {
+      let ds = 0;
+      for (let mo = (y - 1) * 12; mo < y * 12; mo++) ds += mo < ioMonths ? ioPayment : amortPayment;
+      return ds;
+    };
+    const cashFlows = [-equity];
+    for (let y = 1; y <= 5; y++) {
+      const noiY = noi * Math.pow(1 + noiGrowth / 100, y - 1);
+      let cf = noiY - annualDSForYear(y);
+      if (y === 5) cf += saleNet5;
+      cashFlows.push(cf);
+    }
+    const projIRR = irr(cashFlows);
+    const projNPV = npv(discountRate / 100, cashFlows);
 
     // ----- SELL scenario with taxes -----
     const sellingCosts = currentValue * (sellingCostsPct / 100);
@@ -800,15 +837,16 @@ export default function App() {
     const taxesDeferred = totalTaxIfSell;
 
     return {
-      noi, cashFlow, monthlyPayment, annualDebtService, equity, capRate, dscr, debtYield,
-      principalYr1, apprGain, annualDepreciation, deprTaxShield, totalReturnHold, roe, cashOnEquity,
+      noi, cashFlow, monthlyPayment, annualDebtService, equity, capRate, dscr, debtYield, capRateYr2,
+      principalYr1, apprGain, annualDepreciation, deprTaxShield, afterTaxCashFlow, afterTaxRoe,
+      totalReturnHold, roe, cashOnEquity, value5, balAfter5, projIRR, projNPV,
       sellingCosts, adjustedBasis, totalGain, recaptureTax, capGainsTax, totalTaxIfSell, netSaleProceeds,
       redeployReturn, equity1031, newLoan1031, ltv1031, taxesDeferred,
     };
   }, [monthlyRent, otherIncome, vacancyPct, mgmtPct, maintPct, capexPct, propertyTax, insurance, utilities,
       currentValue, currentBalance, currentRate, yearsRemaining, ioYears, apprPct, originalBasis, accumDepr,
       buildingPct, deprRate, taxRate, sellingCostsPct, capGainsRate, recaptureRate, stateTaxRate,
-      discountRate, replacementCost]);
+      discountRate, replacementCost, noiGrowth, stressRent, stressVacancy, stressRate]);
 
   // ============ HEAT SCORE ============
   const heat = useMemo(() => {
@@ -1055,6 +1093,9 @@ export default function App() {
   const exportPDF = () => openPrintReport(buildPayload());
   const exportCSV = () => downloadCSV(buildPayload());
 
+  // Which calc drives the stress-test IRR/NPV display for the active tab.
+  const stressCalc = strategy === 'existing' ? existingCalc : calc;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100" style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system' }}>
       {gateChecked && !accessGranted && (
@@ -1098,7 +1139,7 @@ export default function App() {
               { id: 'buyhold', label: 'Buy & Hold', icon: Home },
               { id: 'brrrr', label: 'BRRRR', icon: RefreshCw },
               { id: 'flip', label: 'Fix & Flip', icon: Wrench },
-              ...(advanced ? [{ id: 'existing', label: 'Analyze Existing', icon: Building2 }] : []),
+              { id: 'existing', label: 'Analyze Existing', icon: Building2 },
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -1432,7 +1473,6 @@ export default function App() {
               />
             )}
 
-            {strategy !== 'existing' && (
             <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
               <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300 mb-1">
                 <Sliders className="w-4 h-4 text-orange-500" /> Stress Test
@@ -1461,20 +1501,21 @@ export default function App() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
-                    <Stat label="Projected IRR (5yr)" value={calc.projIRR === null ? '—' : fmt(calc.projIRR * 100, { pct: true, dec: 1 })}
-                      status={calc.projIRR === null ? 'neutral' : calc.projIRR >= 0.15 ? 'good' : calc.projIRR >= 0.08 ? 'neutral' : 'bad'}
+                    <Stat label="Projected IRR (5yr)" value={stressCalc.projIRR === null ? '—' : fmt(stressCalc.projIRR * 100, { pct: true, dec: 1 })}
+                      status={stressCalc.projIRR === null ? 'neutral' : stressCalc.projIRR >= 0.15 ? 'good' : stressCalc.projIRR >= 0.08 ? 'neutral' : 'bad'}
                       tip="Annualized return that sets the NPV of all projected cash flows (including the Year-5 sale) to zero. 12–15%+ is a common target for rentals." />
-                    <Stat label={`NPV @ ${discountRate}%`} value={fmt(calc.projNPV, { money: true })}
-                      status={calc.projNPV >= 0 ? 'good' : 'bad'}
+                    <Stat label={`NPV @ ${discountRate}%`} value={fmt(stressCalc.projNPV, { money: true })}
+                      status={stressCalc.projNPV >= 0 ? 'good' : 'bad'}
                       tip="Present value of the projected cash flows (incl. sale) minus your cash invested, discounted at your required return. Positive = the deal clears your hurdle." />
                   </div>
                   <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
-                    Based on a 5-year hold, {noiGrowth}% stabilized NOI growth, {apprPct}% appreciation, and a sale at Year&nbsp;5 net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test these returns.
+                    {strategy === 'existing'
+                      ? <>Based on continuing to hold for 5 years — invest today's equity, collect {noiGrowth}% growing NOI, and sell in Year 5 at {apprPct}% appreciation net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test it.</>
+                      : <>Based on a 5-year hold, {noiGrowth}% stabilized NOI growth, {apprPct}% appreciation, and a sale at Year&nbsp;5 net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test these returns.</>}
                   </p>
                 </div>
               )}
             </section>
-            )}
 
             {strategy === 'existing' && (
               <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
@@ -1603,14 +1644,19 @@ export default function App() {
                   <Stat label="Cap Rate" value={fmt(existingCalc.capRate, { pct: true, dec: 2 })}
                     status={existingCalc.capRate >= 6 ? 'good' : existingCalc.capRate >= 4.5 ? 'neutral' : 'warn'}
                     tip="NOI ÷ current value. The unlevered yield at today's price." />
-                  <Stat label="Debt Yield" value={fmt(existingCalc.debtYield, { pct: true, dec: 1 })}
-                    status={existingCalc.debtYield >= 10 ? 'good' : existingCalc.debtYield >= 8 ? 'neutral' : 'warn'}
-                    tip="NOI ÷ current loan balance — a clean leverage/risk gauge." />
                   <Stat label="DSCR" value={fmt(existingCalc.dscr, { dec: 2 })}
                     status={existingCalc.dscr >= 1.25 ? 'good' : existingCalc.dscr >= 1.0 ? 'warn' : 'bad'}
                     tip="NOI ÷ debt service on your current loan. Below 1.0 means it can't cover its mortgage." />
                   <Stat label="NOI (annual)" value={fmt(existingCalc.noi, { money: true })}
                     tip="Net operating income — gross income minus operating expenses, before debt service." />
+                  {advanced && (<>
+                    <Stat label="Debt Yield" value={fmt(existingCalc.debtYield, { pct: true, dec: 1 })}
+                      status={existingCalc.debtYield >= 10 ? 'good' : existingCalc.debtYield >= 8 ? 'neutral' : 'warn'}
+                      tip="NOI ÷ current loan balance — a clean leverage/risk gauge, independent of rate or term." />
+                    <Stat label="Cap Rate (Yr 2)" value={fmt(existingCalc.capRateYr2, { pct: true, dec: 2 })}
+                      sub="yield on cost"
+                      tip="Forward cap rate: NOI grown at your stabilized growth rate for 2 years, divided by current value. Shows the income-yield trend." />
+                  </>)}
                 </div>
               ) : strategy !== 'flip' ? (
                 <div className="grid grid-cols-2 gap-2.5">
@@ -1655,6 +1701,27 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {strategy === 'existing' && advanced && (
+              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
+                <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                  <Calculator className="w-3.5 h-3.5 text-orange-500" /> Returns &amp; Tax
+                </h3>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <Stat label="Annual Depreciation" value={fmt(existingCalc.annualDepreciation, { money: true })}
+                    tip="Non-cash deduction = depreciable basis (building %) × original basis × depreciation rate. Shelters rental income from tax." />
+                  <Stat label="Depr. Tax Shield" value={fmt(existingCalc.deprTaxShield, { money: true })}
+                    status="good"
+                    tip="Annual tax saved from depreciation = annual depreciation × your marginal tax rate." />
+                  <Stat label="After-Tax Cash Flow" value={fmt(existingCalc.afterTaxCashFlow, { money: true })}
+                    status={existingCalc.afterTaxCashFlow >= 0 ? 'good' : 'bad'}
+                    tip="Cash flow plus the depreciation tax shield — what the property really puts in your pocket after the tax benefit." />
+                  <Stat label="After-Tax RoE" value={fmt(existingCalc.afterTaxRoe, { pct: true, dec: 1 })}
+                    status={existingCalc.afterTaxRoe >= 6 ? 'good' : existingCalc.afterTaxRoe >= 3 ? 'neutral' : 'warn'}
+                    tip="After-tax cash flow ÷ current equity — the real cash yield on your trapped equity once the tax shield is counted." />
+                </div>
+              </div>
+            )}
 
             {strategy !== 'flip' && strategy !== 'existing' && advanced && (
               <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
@@ -1724,9 +1791,17 @@ export default function App() {
 
             {strategy !== 'flip' && strategy !== 'existing' && advanced && (
               <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
-                <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-                  <TrendingUp className="w-3.5 h-3.5 text-orange-500" /> Appreciation & Equity ({apprPct}%/yr)
-                </h3>
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                    <TrendingUp className="w-3.5 h-3.5 text-orange-500" /> Appreciation & Equity
+                  </h3>
+                  <div className="flex items-center bg-slate-950/60 border border-slate-700 focus-within:border-orange-500 rounded-md overflow-hidden">
+                    <input type="number" value={apprPct} step={0.5}
+                      onChange={(e) => setApprPct(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                      className="w-12 bg-transparent py-1 px-2 text-xs text-right text-slate-100 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                    <span className="px-1.5 text-[11px] text-slate-500">%/yr</span>
+                  </div>
+                </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-2.5">
                     <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Today</div>
