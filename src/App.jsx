@@ -465,6 +465,21 @@ export default function App() {
 
   const [strategy, setStrategy] = useState('buyhold');
 
+  // Advanced Mode — hides the pro underwriting features by default so the app
+  // stays approachable for new investors. Choice persists per device.
+  const [advanced, setAdvanced] = useState(false);
+  useEffect(() => {
+    try { if (localStorage.getItem('deallab_advanced_v1') === '1') setAdvanced(true); } catch (e) { /* ignore */ }
+  }, []);
+  const toggleAdvanced = () => {
+    setAdvanced((a) => {
+      const next = !a;
+      try { localStorage.setItem('deallab_advanced_v1', next ? '1' : '0'); } catch (e) { /* ignore */ }
+      if (!next && strategy === 'existing') setStrategy('buyhold');
+      return next;
+    });
+  };
+
   // Live rate (pulled from /rate.json, updated daily by a GitHub Action that scrapes MND)
   const [liveRate, setLiveRate] = useState(6.57);
   const [rateDate, setRateDate] = useState('6/2/26');
@@ -671,10 +686,18 @@ export default function App() {
     // --- 5-year IRR / NPV on a stabilized-NOI projection with a Year-5 sale ---
     const holdYears = 5;
     const saleNet5 = projValue5 * (1 - sellingCostsPct / 100) - balAfter5;
+    // Per-year debt service that respects the interest-only step-up: IO payment
+    // while within the IO window, amortizing payment afterward (month-accurate,
+    // so a year straddling the boundary blends correctly).
+    const annualDSForYear = (y) => {
+      let ds = 0;
+      for (let mo = (y - 1) * 12; mo < y * 12; mo++) ds += mo < ioMonths ? ioPayment : amortPayment;
+      return ds;
+    };
     const cashFlows = [-totalCashIn];
     for (let y = 1; y <= holdYears; y++) {
       const noiY = noi * Math.pow(1 + noiGrowth / 100, y - 1);
-      let cf = noiY - annualDebtService;
+      let cf = noiY - annualDSForYear(y);
       if (y === holdYears) cf += saleNet5;
       cashFlows.push(cf);
     }
@@ -1075,7 +1098,7 @@ export default function App() {
               { id: 'buyhold', label: 'Buy & Hold', icon: Home },
               { id: 'brrrr', label: 'BRRRR', icon: RefreshCw },
               { id: 'flip', label: 'Fix & Flip', icon: Wrench },
-              { id: 'existing', label: 'Analyze Existing', icon: Building2 },
+              ...(advanced ? [{ id: 'existing', label: 'Analyze Existing', icon: Building2 }] : []),
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -1092,6 +1115,16 @@ export default function App() {
             ))}
           </div>
           <div className="flex gap-2">
+            <button onClick={toggleAdvanced}
+              title={advanced ? 'Hide the advanced underwriting features' : 'Show advanced underwriting features (depreciation, IRR/NPV, debt yield, 1031, remodel planner, and more)'}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition whitespace-nowrap ${
+                advanced
+                  ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg shadow-orange-500/30'
+                  : 'bg-slate-900 border border-orange-500/40 text-orange-300 hover:border-orange-500 hover:text-orange-200'
+              }`}>
+              <Flame className={`w-4 h-4 ${advanced ? '' : 'animate-pulse'}`} />
+              {advanced ? 'Advanced Mode: On' : 'Engage Advanced Mode'}
+            </button>
             <button onClick={exportPDF} title="Export a branded PDF (via your browser's print dialog)"
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-orange-500 transition whitespace-nowrap">
               <Printer className="w-4 h-4" /> PDF
@@ -1161,7 +1194,7 @@ export default function App() {
                   tip="The negotiated purchase price. For off-market deals, this is what you'd pay. For MLS, the list price or your offer." />
                 <NumInput label="Closing Costs" value={closingCostsPct} onChange={setClosingCostsPct} suffix="%"
                   tip="Typically 1–3% of purchase price. Includes title, lender fees, transfer taxes, etc." />
-                {strategy !== 'flip' && (
+                {strategy !== 'flip' && advanced && (
                   <NumInput label="Appreciation / yr" value={apprPct} onChange={setApprPct} suffix="%" step={0.5}
                     tip="Annual home-price appreciation, compounded. 3%/yr is a conservative long-run default. Drives the 1- and 5-year value & equity projections." />
                 )}
@@ -1185,10 +1218,12 @@ export default function App() {
                   tip="Investment property minimums: 20–25% conventional, 15% with PMI. DSCR loans usually want 20–25%." />
                 <NumInput label="Interest Rate" value={rate} onChange={(v) => { setRate(v); setUseLiveRate(false); }} suffix="%"
                   tip="Live 30-yr rate auto-loaded from Mortgage News Daily. Override with your actual lender quote — investment property rates are typically 0.5–1% higher than owner-occupied." />
-                <NumInput label="Amortization" value={term} onChange={setTerm} suffix="yrs"
-                  tip="Amortization period. 30-year is standard for rentals; 15-year builds equity faster but kills cash flow." />
-                <NumInput label="Interest-Only" value={ioYears} onChange={setIoYears} suffix="yrs" step={0.5}
-                  tip="Interest-only period at the start of the loan. During IO the payment is interest only (lower payment, higher cash flow, but no principal paydown). Common on DSCR and commercial loans. 0 = fully amortizing from day one." />
+                <NumInput label={advanced ? 'Amortization' : 'Loan Term'} value={term} onChange={setTerm} suffix="yrs"
+                  tip="Loan term / amortization period. 30-year is standard for rentals; 15-year builds equity faster but kills cash flow." />
+                {advanced && (
+                  <NumInput label="Interest-Only" value={ioYears} onChange={setIoYears} suffix="yrs" step={0.5}
+                    tip="Interest-only period at the start of the loan. During IO the payment is interest only (lower payment, higher cash flow, but no principal paydown). Common on DSCR and commercial loans. 0 = fully amortizing from day one." />
+                )}
                 <div className="flex items-end">
                   <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
                     <input type="checkbox" checked={useLiveRate} onChange={(e) => setUseLiveRate(e.target.checked)}
@@ -1347,7 +1382,7 @@ export default function App() {
               </section>
             )}
 
-            {strategy !== 'flip' && (
+            {strategy !== 'flip' && advanced && (
               <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
                 <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300 mb-4">
                   <Calculator className="w-4 h-4 text-orange-500" /> Tax, Depreciation &amp; Projection
@@ -1382,7 +1417,7 @@ export default function App() {
               </section>
             )}
 
-            {strategy === 'flip' && (
+            {strategy === 'flip' && advanced && (
               <RemodelPlanner
                 phases={remodelPhases}
                 updatePhase={updatePhase}
@@ -1413,7 +1448,7 @@ export default function App() {
                 )}
               </div>
 
-              {strategy !== 'flip' && (
+              {strategy !== 'flip' && advanced && (
                 <div className="mt-5 pt-4 border-t border-slate-800">
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -1596,12 +1631,14 @@ export default function App() {
                   <Stat label="Total ROI Yr 1" value={fmt(calc.totalRoi, { pct: true, dec: 1 })}
                     sub={`incl. paydown + ${apprPct}% apprec.`}
                     tip="Cash flow + principal paydown + appreciation, divided by cash invested. Captures real wealth-building." />
-                  <Stat label="Debt Yield" value={fmt(calc.debtYield, { pct: true, dec: 1 })}
-                    status={calc.debtYield >= 10 ? 'good' : calc.debtYield >= 8 ? 'neutral' : 'warn'}
-                    tip="NOI ÷ loan amount. A lender's purest risk measure — independent of rate or amortization. Most want 9–10%+. Below 8% is aggressive leverage." />
-                  <Stat label="Cap Rate (Yr 2)" value={fmt(calc.capRateYr2, { pct: true, dec: 2 })}
-                    sub="yield on cost"
-                    tip="Forward cap rate: NOI grown at your stabilized growth rate for 2 years, divided by your purchase price. Shows the income-yield trend on your original basis." />
+                  {advanced && (<>
+                    <Stat label="Debt Yield" value={fmt(calc.debtYield, { pct: true, dec: 1 })}
+                      status={calc.debtYield >= 10 ? 'good' : calc.debtYield >= 8 ? 'neutral' : 'warn'}
+                      tip="NOI ÷ loan amount. A lender's purest risk measure — independent of rate or amortization. Most want 9–10%+. Below 8% is aggressive leverage." />
+                    <Stat label="Cap Rate (Yr 2)" value={fmt(calc.capRateYr2, { pct: true, dec: 2 })}
+                      sub="yield on cost"
+                      tip="Forward cap rate: NOI grown at your stabilized growth rate for 2 years, divided by your purchase price. Shows the income-yield trend on your original basis." />
+                  </>)}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2.5">
@@ -1619,7 +1656,7 @@ export default function App() {
               )}
             </div>
 
-            {strategy !== 'flip' && strategy !== 'existing' && (
+            {strategy !== 'flip' && strategy !== 'existing' && advanced && (
               <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
                 <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
                   <Calculator className="w-3.5 h-3.5 text-orange-500" /> Returns &amp; Tax
@@ -1655,12 +1692,14 @@ export default function App() {
                   <Stat label="Post-Refi CoC" value={calc.cashLeftIn <= 0 ? '∞' : fmt(calc.brrrCoC, { pct: true, dec: 1 })}
                     status="good"
                     tip="Cash-on-cash after refinancing. If you pull all your cash out, return is effectively infinite." />
-                  <Stat label="Equity in Deal" value={fmt(arv - calc.refiLoanAmount, { money: true })}
-                    status={(arv - calc.refiLoanAmount) >= arv * 0.2 ? 'good' : 'warn'}
-                    tip="Your equity after the refinance = ARV − refi loan balance. At 75% LTV you keep ~25% of ARV as equity even after pulling cash out." />
-                  <Stat label="Equity %" value={fmt(arv > 0 ? ((arv - calc.refiLoanAmount) / arv) * 100 : 0, { pct: true, dec: 0 })}
-                    sub="of ARV"
-                    tip="Equity as a share of after-repair value. Lenders cap cash-out refis at ~75% LTV, leaving you ~25% equity." />
+                  {advanced && (<>
+                    <Stat label="Equity in Deal" value={fmt(arv - calc.refiLoanAmount, { money: true })}
+                      status={(arv - calc.refiLoanAmount) >= arv * 0.2 ? 'good' : 'warn'}
+                      tip="Your equity after the refinance = ARV − refi loan balance. At 75% LTV you keep ~25% of ARV as equity even after pulling cash out." />
+                    <Stat label="Equity %" value={fmt(arv > 0 ? ((arv - calc.refiLoanAmount) / arv) * 100 : 0, { pct: true, dec: 0 })}
+                      sub="of ARV"
+                      tip="Equity as a share of after-repair value. Lenders cap cash-out refis at ~75% LTV, leaving you ~25% equity." />
+                  </>)}
                 </div>
               </div>
             )}
@@ -1683,7 +1722,7 @@ export default function App() {
             </div>
             )}
 
-            {strategy !== 'flip' && strategy !== 'existing' && (
+            {strategy !== 'flip' && strategy !== 'existing' && advanced && (
               <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
                 <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
                   <TrendingUp className="w-3.5 h-3.5 text-orange-500" /> Appreciation & Equity ({apprPct}%/yr)
