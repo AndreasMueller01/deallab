@@ -1,0 +1,42 @@
+name: Update live mortgage rate
+
+# Scrapes the MND 30-yr fixed rate and commits public/rate.json.
+# Vercel auto-deploys on the resulting commit, so the live site picks up the new rate.
+
+on:
+  schedule:
+    # MND updates each weekday afternoon. Run Mon–Fri at 21:30 UTC (~4:30pm ET / 1:30pm PT).
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-rate
+  cancel-in-progress: false
+
+jobs:
+  update-rate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Scrape MND and update public/rate.json
+        run: node scripts/update-rate.mjs
+
+      - name: Commit if changed
+        run: |
+          if [[ -n "$(git status --porcelain public/rate.json)" ]]; then
+            git config user.name "deallab-rate-bot"
+            git config user.email "actions@github.com"
+            git add public/rate.json
+            git commit -m "chore: update live 30yr rate [skip ci]"
+            git push
+          else
+            echo "rate.json unchanged — nothing to commit."
+          fi
