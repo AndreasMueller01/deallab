@@ -10,23 +10,34 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = join(__dirname, '..', 'public', 'rate.json');
 const URL = 'https://www.mortgagenewsdaily.com/mortgage-rates/mnd';
 
-function parseRate(html) {
-  // The page renders the 30YR figure in a few places. Strategy:
-  // 1) Find the "30 Yr. Fixed" table row and grab the first percentage + change.
-  // 2) Fall back to the header "30YR Fixed Rate 6.57% -0.03%" pattern.
-  let m = html.match(/30\s*Yr\.?\s*Fixed[\s\S]{0,160}?(\d\.\d{2})%[\s\S]{0,40}?([+\-]\d\.\d{2}%)/i);
-  if (!m) m = html.match(/30YR\s*Fixed\s*Rate[\s\S]{0,40}?(\d\.\d{2})%[\s\S]{0,40}?([+\-]\d\.\d{2}%)/i);
-  if (!m) m = html.match(/(\d\.\d{2})%[\s\S]{0,40}?([+\-]\d\.\d{2}%)/); // last resort: first rate+change pair
-  if (!m) return null;
-  return { rate: parseFloat(m[1]), change: m[2] };
+// Collapse HTML to plain text so tags/classes between the numbers don't matter.
+function stripTags(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ');
 }
 
-function parseDate(html) {
-  const m = html.match(/Last Updated:\s*<\/?[^>]*>?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i)
-    || html.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*30\s*Yr/i)
-    || html.match(/Last Updated:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
+function parseRate(text) {
+  const patterns = [
+    /30\s*Yr\.?\s*Fixed(?:\s*Rate)?\D{0,80}?(\d\.\d{2})\s*%\D{0,30}?([+\-]\d\.\d{2})\s*%/i,
+    /30\s*YR\s*Fixed\D{0,80}?(\d\.\d{2})\s*%\D{0,30}?([+\-]\d\.\d{2})\s*%/i,
+    /30\s*Yr\.?\s*Fixed(?:\s*Rate)?\D{0,80}?(\d\.\d{2})\s*%/i, // rate only, no change
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return { rate: parseFloat(m[1]), change: m[2] ? m[2] + '%' : null };
+  }
+  return null;
+}
+
+function parseDate(text) {
+  const m = text.match(/Last Updated:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i)
+    || text.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*30\s*Yr/i);
   if (!m) return null;
-  // Normalize to M/D/YY
   const parts = m[1].split('/');
   const yy = parts[2].length === 4 ? parts[2].slice(2) : parts[2];
   return `${parseInt(parts[0], 10)}/${parseInt(parts[1], 10)}/${yy}`;
@@ -35,20 +46,32 @@ function parseDate(html) {
 async function main() {
   const res = await fetch(URL, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; DealLabRateBot/1.0; +https://www.nashvilleinvestoragent.com)',
-      'Accept': 'text/html',
+      // A real browser UA — MND's edge protection rejects/serves a challenge to obvious bots.
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
     },
   });
-  if (!res.ok) throw new Error(`MND fetch failed: ${res.status}`);
   const html = await res.text();
+  const text = stripTags(html);
 
-  const parsed = parseRate(html);
+  const parsed = parseRate(text);
   if (!parsed || isNaN(parsed.rate) || parsed.rate < 1 || parsed.rate > 20) {
-    throw new Error('Could not parse a sane 30YR rate from MND');
+    // Diagnostics so a failure tells us *why* (bot challenge vs. markup change).
+    const looksBlocked = /just a moment|cf-browser-verification|attention required|enable javascript/i.test(text);
+    const fixedIdx = text.search(/30\s*Yr/i);
+    console.error(`Could not parse a sane 30YR rate from MND.`);
+    console.error(`  HTTP status: ${res.status} ${res.statusText}`);
+    console.error(`  HTML bytes: ${html.length}, text bytes: ${text.length}`);
+    console.error(`  Looks like a bot/JS challenge page: ${looksBlocked}`);
+    console.error(`  Context around "30 Yr": ${fixedIdx >= 0 ? JSON.stringify(text.slice(fixedIdx, fixedIdx + 160)) : 'NOT FOUND'}`);
+    const pctIdx = text.search(/\d\.\d{2}\s*%/);
+    console.error(`  First "%" context: ${pctIdx >= 0 ? JSON.stringify(text.slice(Math.max(0, pctIdx - 40), pctIdx + 20)) : 'NO PERCENT FOUND'}`);
+    process.exit(1);
   }
-  const date = parseDate(html) || new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
 
-  // Avoid rewriting an identical file (keeps git history clean).
+  const date = parseDate(text) || new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
+
   let prev = {};
   try { prev = JSON.parse(readFileSync(OUT, 'utf8')); } catch { /* none */ }
 
@@ -66,7 +89,7 @@ async function main() {
   }
 
   writeFileSync(OUT, JSON.stringify(out, null, 2) + '\n');
-  console.log(`Updated rate.json -> ${out.rate}% (${out.change}) as of ${out.date}`);
+  console.log(`Updated rate.json -> ${out.rate}% (${out.change ?? 'n/a'}) as of ${out.date}`);
 }
 
-main().catch((e) => { console.error(e.message); process.exit(1); });
+main().catch((e) => { console.error('Scrape failed:', e.message); process.exit(1); });
