@@ -494,7 +494,7 @@ export default function App() {
   // Property
   const [address, setAddress] = useState('');
   const [purchasePrice, setPurchasePrice] = useState(400000);
-  const [closingCostsPct, setClosingCostsPct] = useState(1.5);
+  const [closingCostsPct, setClosingCostsPct] = useState(1);
   const [rehab, setRehab] = useState(0);
   const [arv, setArv] = useState(480000);
   const [apprPct, setApprPct] = useState(3); // annual appreciation, compounded
@@ -505,6 +505,7 @@ export default function App() {
   const [useLiveRate, setUseLiveRate] = useState(true);
   const [term, setTerm] = useState(30); // amortization period (years)
   const [ioYears, setIoYears] = useState(0); // interest-only period (years)
+  const [cashPurchase, setCashPurchase] = useState(false); // all-cash, no financing
 
   // Tax & depreciation assumptions
   const [deprRate, setDeprRate] = useState(3.636); // % of depreciable basis / yr (27.5-yr residential)
@@ -551,6 +552,16 @@ export default function App() {
   const [maintPct, setMaintPct] = useState(5);
   const [capexPct, setCapexPct] = useState(5);
   const [utilities, setUtilities] = useState(0);
+  // User-defined extra operating expenses (annual $). Used by rental strategies.
+  const [otherExpenses, setOtherExpenses] = useState([]); // [{id, label, amount}]
+  const addOtherExpense = () =>
+    setOtherExpenses((xs) => [...xs, { id: Math.max(0, ...xs.map(x => x.id)) + 1, label: '', amount: 0 }]);
+  const updateOtherExpense = (id, field, value) =>
+    setOtherExpenses((xs) => xs.map(x => x.id === id ? { ...x, [field]: value } : x));
+  const removeOtherExpense = (id) =>
+    setOtherExpenses((xs) => xs.filter(x => x.id !== id));
+  const otherOpexTotal = useMemo(
+    () => otherExpenses.reduce((s, x) => s + (Number(x.amount) || 0), 0), [otherExpenses]);
 
   // Flip-specific
   const [holdingMonths, setHoldingMonths] = useState(6);
@@ -561,15 +572,25 @@ export default function App() {
   const [remodelUnits, setRemodelUnits] = useState(1);
   const [remodelOverrun, setRemodelOverrun] = useState(15); // % contingency for high end of range
   const [openPhase, setOpenPhase] = useState(null);
+  // User-defined extra flip line items (one-time $) beyond the preset phases.
+  const [remodelExtras, setRemodelExtras] = useState([]); // [{id, label, amount}]
+  const addRemodelExtra = () =>
+    setRemodelExtras((xs) => [...xs, { id: Math.max(0, ...xs.map(x => x.id)) + 1, label: '', amount: 0 }]);
+  const updateRemodelExtra = (id, field, value) =>
+    setRemodelExtras((xs) => xs.map(x => x.id === id ? { ...x, [field]: value } : x));
+  const removeRemodelExtra = (id) =>
+    setRemodelExtras((xs) => xs.filter(x => x.id !== id));
 
   const remodel = useMemo(() => {
-    const totalCost = remodelPhases.reduce((s, p) => s + (Number(p.cost) || 0), 0);
+    const phasesCost = remodelPhases.reduce((s, p) => s + (Number(p.cost) || 0), 0);
+    const extrasCost = remodelExtras.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const totalCost = phasesCost + extrasCost;
     const criticalWeeks = remodelPhases.filter(p => !p.parallel).reduce((s, p) => s + (Number(p.weeks) || 0), 0);
     const lowCost = totalCost;
     const highCost = totalCost * (1 + remodelOverrun / 100);
     const perUnit = remodelUnits > 0 ? totalCost / remodelUnits : totalCost;
-    return { totalCost, criticalWeeks, lowCost, highCost, perUnit };
-  }, [remodelPhases, remodelUnits, remodelOverrun]);
+    return { totalCost, phasesCost, extrasCost, criticalWeeks, lowCost, highCost, perUnit };
+  }, [remodelPhases, remodelExtras, remodelUnits, remodelOverrun]);
 
   const updatePhase = (id, field, value) =>
     setRemodelPhases(remodelPhases.map(p => p.id === id ? { ...p, [field]: value } : p));
@@ -609,13 +630,13 @@ export default function App() {
     const mgmt = effectiveGrossIncome * (mgmtPct / 100);
     const maint = effRent * 12 * (maintPct / 100);
     const capex = effRent * 12 * (capexPct / 100);
-    const operatingExpenses = propertyTax + insurance + utilities * 12 + mgmt + maint + capex;
+    const operatingExpenses = propertyTax + insurance + utilities * 12 + mgmt + maint + capex + otherOpexTotal;
 
     const noi = effectiveGrossIncome - operatingExpenses;
 
-    const downPayment = purchasePrice * (downPct / 100);
+    const downPayment = cashPurchase ? purchasePrice : purchasePrice * (downPct / 100);
     const closingCosts = purchasePrice * (closingCostsPct / 100);
-    const loanAmount = purchasePrice - downPayment;
+    const loanAmount = cashPurchase ? 0 : purchasePrice - downPayment;
 
     // Interest-only aware payment. During the IO period the payment is interest
     // only; afterward the balance amortizes over the remaining term.
@@ -736,8 +757,8 @@ export default function App() {
       annualDepreciation, deprTaxShield, debtYield, capRateYr2,
       initialEquityReturn, totalEquityReturn5, projIRR, projNPV, saleNet5, cashFlows,
     };
-  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, ioYears, monthlyRent, otherIncome,
-      vacancyPct, propertyTax, insurance, mgmtPct, maintPct, capexPct, utilities, apprPct,
+  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, ioYears, cashPurchase, monthlyRent, otherIncome,
+      vacancyPct, propertyTax, insurance, mgmtPct, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
       deprRate, buildingPct, taxRate, discountRate, noiGrowth,
       holdingMonths, sellingCostsPct, stressRent, stressVacancy, stressRate]);
 
@@ -754,29 +775,31 @@ export default function App() {
     const mgmt = egi * (mgmtPct / 100);
     const maint = effRent * 12 * (maintPct / 100);
     const capex = effRent * 12 * (capexPct / 100);
-    const opex = propertyTax + insurance + utilities * 12 + mgmt + maint + capex;
+    const opex = propertyTax + insurance + utilities * 12 + mgmt + maint + capex + otherOpexTotal;
     const noi = egi - opex;
 
+    // All-cash (owned free & clear) zeroes the loan.
+    const effBalance = cashPurchase ? 0 : currentBalance;
     const mRate = effRate / 12 / 100;
     const ioMonths = Math.round(ioYears * 12);
     const amortMonths = Math.max(1, yearsRemaining * 12 - ioMonths);
-    const ioPayment = currentBalance > 0 ? currentBalance * mRate : 0;
-    const amortPayment = currentBalance > 0 ? pmt(effRate, amortMonths, currentBalance) : 0;
+    const ioPayment = effBalance > 0 ? effBalance * mRate : 0;
+    const amortPayment = effBalance > 0 ? pmt(effRate, amortMonths, effBalance) : 0;
     const monthlyPayment = ioMonths > 0 ? ioPayment : amortPayment;
     const annualDebtService = monthlyPayment * 12;
     const cashFlow = noi - annualDebtService;
 
-    const equity = currentValue - currentBalance;
+    const equity = currentValue - effBalance;
     const capRate = currentValue > 0 ? (noi / currentValue) * 100 : 0;
     const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
-    const debtYield = currentBalance > 0 ? (noi / currentBalance) * 100 : null;
+    const debtYield = effBalance > 0 ? (noi / effBalance) * 100 : null;
     // Forward (Yr-2) cap rate on cost basis (current value), NOI grown at stabilized rate.
     const capRateYr2 = currentValue > 0 ? (noi * Math.pow(1 + noiGrowth / 100, 2) / currentValue) * 100 : 0;
 
     // Loan balance after N months (interest-only aware).
     const balAfter = (months) => {
-      if (currentBalance <= 0) return 0;
-      let b = currentBalance;
+      if (effBalance <= 0) return 0;
+      let b = effBalance;
       for (let i = 0; i < months; i++) {
         const interest = b * mRate;
         if (i < ioMonths) continue;
@@ -784,7 +807,7 @@ export default function App() {
       }
       return Math.max(0, b);
     };
-    const principalYr1 = currentBalance - balAfter(12);
+    const principalYr1 = effBalance - balAfter(12);
     const balAfter5 = balAfter(60);
 
     const apprGain = currentValue * (apprPct / 100);
@@ -825,13 +848,13 @@ export default function App() {
     const capGainPortion = Math.max(0, totalGain - Math.max(0, accumDepr));
     const capGainsTax = capGainPortion * ((capGainsRate + stateTaxRate) / 100);
     const totalTaxIfSell = recaptureTax + capGainsTax;
-    const netSaleProceeds = amountRealized - currentBalance - totalTaxIfSell;
+    const netSaleProceeds = amountRealized - effBalance - totalTaxIfSell;
 
     // Redeploy net proceeds at the required return — the opportunity cost of holding.
     const redeployReturn = netSaleProceeds * (discountRate / 100);
 
     // 1031 exchange: defer all tax, roll full equity into the replacement.
-    const equity1031 = amountRealized - currentBalance;                     // tax-deferred equity available
+    const equity1031 = amountRealized - effBalance;                     // tax-deferred equity available
     const newLoan1031 = Math.max(0, replacementCost - equity1031);
     const ltv1031 = replacementCost > 0 ? (newLoan1031 / replacementCost) * 100 : 0;
     const taxesDeferred = totalTaxIfSell;
@@ -843,8 +866,8 @@ export default function App() {
       sellingCosts, adjustedBasis, totalGain, recaptureTax, capGainsTax, totalTaxIfSell, netSaleProceeds,
       redeployReturn, equity1031, newLoan1031, ltv1031, taxesDeferred,
     };
-  }, [monthlyRent, otherIncome, vacancyPct, mgmtPct, maintPct, capexPct, propertyTax, insurance, utilities,
-      currentValue, currentBalance, currentRate, yearsRemaining, ioYears, apprPct, originalBasis, accumDepr,
+  }, [monthlyRent, otherIncome, vacancyPct, mgmtPct, maintPct, capexPct, propertyTax, insurance, utilities, otherOpexTotal,
+      currentValue, currentBalance, currentRate, yearsRemaining, ioYears, cashPurchase, apprPct, originalBasis, accumDepr,
       buildingPct, deprRate, taxRate, sellingCostsPct, capGainsRate, recaptureRate, stateTaxRate,
       discountRate, replacementCost, noiGrowth, stressRent, stressVacancy, stressRate]);
 
@@ -987,9 +1010,10 @@ export default function App() {
         { title: 'Property & Purchase', rows: [
           ['Purchase Price', m(purchasePrice)], ['Closing Costs', pct(closingCostsPct)],
           ['Rehab Budget', m(rehab)], ['ARV', m(arv)] ] },
-        { title: 'Financing', rows: [
-          ['Down Payment', pct(downPct)], ['Interest Rate', pct(rate, 2)],
-          ['Loan Amount', m(calc.loanAmount)], ['Monthly P&I', m(calc.monthlyPI)] ] },
+        { title: 'Financing', rows: cashPurchase
+          ? [['Financing', 'All cash — no loan']]
+          : [['Down Payment', pct(downPct)], ['Interest Rate', pct(rate, 2)],
+             ['Loan Amount', m(calc.loanAmount)], ['Monthly P&I', m(calc.monthlyPI)]] },
         { title: 'Flip Returns', rows: [
           ['Projected Profit', m(calc.flipProfit)], ['ROI', pct(calc.flipRoi)],
           ['MAO (70% rule)', m(calc.mao)], ['Holding Costs', m(calc.holdingCosts)],
@@ -997,6 +1021,8 @@ export default function App() {
         { title: 'Remodel Plan', rows: [
           ['Timeline (critical path)', `${remodel.criticalWeeks.toFixed(1)} wks`],
           ['Cost Range', `${m(remodel.lowCost)} – ${m(remodel.highCost)}`],
+          ['Phases Cost', m(remodel.phasesCost)],
+          ...remodelExtras.filter(x => x.label || x.amount).map(x => [`Other: ${x.label || 'expense'}`, m(Number(x.amount) || 0)]),
           ['Total Cost', m(remodel.totalCost)], ['Per Unit', m(remodel.perUnit)] ] },
       ];
       base.charts = [{ title: 'Flip Economics', bars: [
@@ -1020,11 +1046,14 @@ export default function App() {
     if (strategy === 'existing') {
       base.sections = [
         { title: 'Existing Property', rows: [
-          ['Current Value', m(currentValue)], ['Loan Balance', m(currentBalance)],
-          ['Your Rate', pct(currentRate, 3)], ['Years Remaining', `${yearsRemaining} yrs`],
+          ['Current Value', m(currentValue)],
+          ...(cashPurchase
+            ? [['Financing', 'Owned free & clear']]
+            : [['Loan Balance', m(currentBalance)], ['Your Rate', pct(currentRate, 3)], ['Years Remaining', `${yearsRemaining} yrs`]]),
           ['Current Equity', m(existingCalc.equity)], ['Original Basis', m(originalBasis)],
           ['Depreciation Taken', m(accumDepr)] ] },
         { title: 'Performance', rows: [
+          ...otherExpenses.filter(x => x.label || x.amount).map(x => [`Other expense: ${x.label || 'item'}`, m(Number(x.amount) || 0) + '/yr']),
           ['Monthly Cash Flow', m(existingCalc.cashFlow / 12)], ['NOI (annual)', m(existingCalc.noi)],
           ['Cap Rate', pct(existingCalc.capRate, 2)], ['Debt Yield', pct(existingCalc.debtYield)],
           ['DSCR', fmt(existingCalc.dscr, { dec: 2 })],
@@ -1054,13 +1083,15 @@ export default function App() {
         ['Purchase Price', m(purchasePrice)], ['Closing Costs', pct(closingCostsPct)],
         ...(strategy === 'brrrr' ? [['Rehab Budget', m(rehab)], ['ARV', m(arv)]] : []),
         ['Appreciation/yr', pct(apprPct)] ] },
-      { title: 'Financing', rows: [
-        ['Down Payment', pct(downPct)], ['Interest Rate', pct(rate, 2)],
-        ['Amortization', `${term} yrs`], ['Interest-Only', `${ioYears} yrs`],
-        ['Loan Amount', m(calc.loanAmount)], ['Monthly P&I', m(calc.monthlyPI)],
-        ['Total Cash In', m(calc.totalCashIn)] ] },
+      { title: 'Financing', rows: cashPurchase
+        ? [['Financing', 'All cash — no loan'], ['Total Cash In', m(calc.totalCashIn)]]
+        : [['Down Payment', pct(downPct)], ['Interest Rate', pct(rate, 2)],
+           ['Amortization', `${term} yrs`], ['Interest-Only', `${ioYears} yrs`],
+           ['Loan Amount', m(calc.loanAmount)], ['Monthly P&I', m(calc.monthlyPI)],
+           ['Total Cash In', m(calc.totalCashIn)]] },
       { title: 'Income & Expenses', rows: [
         ['Monthly Rent', m(monthlyRent)], ['Vacancy', pct(vacancyPct)],
+        ...otherExpenses.filter(x => x.label || x.amount).map(x => [`Other: ${x.label || 'expense'}`, m(Number(x.amount) || 0) + '/yr']),
         ['Operating Expenses', m(calc.operatingExpenses)], ['NOI (annual)', m(calc.noi)] ] },
       { title: 'Key Metrics', rows: [
         ['Cash-on-Cash', pct(calc.cashOnCash)], ['Cap Rate', pct(calc.capRate, 2)],
@@ -1181,9 +1212,16 @@ export default function App() {
           <div className="lg:col-span-2 space-y-5">
             {strategy === 'existing' && (
               <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300 mb-4">
-                  <Building2 className="w-4 h-4 text-orange-500" /> Your Existing Property
-                </h2>
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300">
+                    <Building2 className="w-4 h-4 text-orange-500" /> Your Existing Property
+                  </h2>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-1.5">
+                    <input type="checkbox" checked={cashPurchase} onChange={(e) => setCashPurchase(e.target.checked)}
+                      className="w-4 h-4 accent-orange-500" />
+                    Owned free &amp; clear (no loan)
+                  </label>
+                </div>
                 <div className="mb-3">
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-1">
                     Property Address <span className="ml-1 text-slate-600">(optional)</span>
@@ -1195,14 +1233,16 @@ export default function App() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <NumInput label="Current Value" value={currentValue} onChange={setCurrentValue} prefix="$"
                     tip="Today's market value — what it would sell for now. Use recent comps or a broker's CMA, not what you paid." />
-                  <NumInput label="Loan Balance" value={currentBalance} onChange={setCurrentBalance} prefix="$"
-                    tip="Your current outstanding mortgage balance (payoff). 0 if owned free and clear." />
-                  <NumInput label="Your Rate" value={currentRate} onChange={setCurrentRate} suffix="%" step={0.125}
-                    tip="The interest rate on your existing loan — not today's market rate." />
-                  <NumInput label="Years Remaining" value={yearsRemaining} onChange={setYearsRemaining} suffix="yrs"
-                    tip="Years left on your amortization. Drives your current payment and principal paydown." />
-                  <NumInput label="Interest-Only" value={ioYears} onChange={setIoYears} suffix="yrs" step={0.5}
-                    tip="Remaining interest-only period, if any. 0 for a normal amortizing loan." />
+                  {!cashPurchase && (<>
+                    <NumInput label="Loan Balance" value={currentBalance} onChange={setCurrentBalance} prefix="$"
+                      tip="Your current outstanding mortgage balance (payoff). 0 if owned free and clear." />
+                    <NumInput label="Your Rate" value={currentRate} onChange={setCurrentRate} suffix="%" step={0.125}
+                      tip="The interest rate on your existing loan — not today's market rate." />
+                    <NumInput label="Years Remaining" value={yearsRemaining} onChange={setYearsRemaining} suffix="yrs"
+                      tip="Years left on your amortization. Drives your current payment and principal paydown." />
+                    <NumInput label="Interest-Only" value={ioYears} onChange={setIoYears} suffix="yrs" step={0.5}
+                      tip="Remaining interest-only period, if any. 0 for a normal amortizing loan." />
+                  </>)}
                   <NumInput label="Appreciation / yr" value={apprPct} onChange={setApprPct} suffix="%" step={0.5}
                     tip="Expected annual appreciation, compounded. Feeds the return-on-equity calculation." />
                   <NumInput label="Original Basis" value={originalBasis} onChange={setOriginalBasis} prefix="$"
@@ -1251,9 +1291,22 @@ export default function App() {
             </section>
 
             <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
-              <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300 mb-4">
-                <DollarSign className="w-4 h-4 text-orange-500" /> Financing
-              </h2>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300">
+                  <DollarSign className="w-4 h-4 text-orange-500" /> Financing
+                </h2>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-1.5">
+                  <input type="checkbox" checked={cashPurchase} onChange={(e) => setCashPurchase(e.target.checked)}
+                    className="w-4 h-4 accent-orange-500" />
+                  Paying all cash (no loan)
+                </label>
+              </div>
+              {cashPurchase ? (
+                <div className="text-xs text-slate-400 bg-slate-950/40 border border-slate-800 rounded-lg p-3 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  All-cash purchase — no loan, no debt service. Your full purchase price (plus closing &amp; rehab) is the cash invested. DSCR and debt yield don't apply.
+                </div>
+              ) : (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <NumInput label="Down Payment" value={downPct} onChange={setDownPct} suffix="%"
                   tip="Investment property minimums: 20–25% conventional, 15% with PMI. DSCR loans usually want 20–25%." />
@@ -1273,6 +1326,7 @@ export default function App() {
                   </label>
                 </div>
               </div>
+              )}
             </section>
             </>)}
 
@@ -1420,6 +1474,36 @@ export default function App() {
                     warn={warnings.some(w => w.field === 'capex')}
                     tip="Big-ticket items (roof, HVAC, water heater). These WILL happen — fund the reserve now. 5–10% of rent is standard." />
                 </div>
+
+                <div className="mt-4 pt-4 border-t border-slate-800">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Other Operating Expenses <span className="text-slate-500 normal-case font-normal">(annual)</span></span>
+                  </div>
+                  {otherExpenses.length > 0 && (
+                    <div className="space-y-2 mb-2">
+                      {otherExpenses.map((x) => (
+                        <div key={x.id} className="flex items-center gap-2">
+                          <input type="text" value={x.label} placeholder="e.g. Landscaping, Pest, Accounting"
+                            onChange={(e) => updateOtherExpense(x.id, 'label', e.target.value)}
+                            className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-orange-500" />
+                          <div className="flex items-center bg-slate-900 border border-slate-800 rounded overflow-hidden focus-within:border-orange-500 w-36">
+                            <span className="px-2 text-slate-500 text-sm">$</span>
+                            <input type="number" value={x.amount} min="0"
+                              onChange={(e) => updateOtherExpense(x.id, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                              className="w-full bg-transparent py-1.5 text-sm text-slate-100 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                            <span className="px-2 text-slate-500 text-[11px] whitespace-nowrap">/yr</span>
+                          </div>
+                          <button onClick={() => removeOtherExpense(x.id)} title="Remove"
+                            className="text-slate-500 hover:text-red-400 text-lg leading-none px-1">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={addOtherExpense}
+                    className="w-full py-2 border border-dashed border-slate-700 hover:border-orange-500 hover:bg-orange-500/5 rounded-lg text-xs text-slate-400 hover:text-orange-400 transition">
+                    + Add operating expense (annual)
+                  </button>
+                </div>
               </section>
             )}
 
@@ -1469,6 +1553,10 @@ export default function App() {
                 setOverrun={setRemodelOverrun}
                 openPhase={openPhase}
                 setOpenPhase={setOpenPhase}
+                extras={remodelExtras}
+                addExtra={addRemodelExtra}
+                updateExtra={updateRemodelExtra}
+                removeExtra={removeRemodelExtra}
                 onUseAsRehab={() => setRehab(Math.round(remodel.totalCost))}
               />
             )}
@@ -1545,7 +1633,7 @@ export default function App() {
                 <div className="space-y-1.5 text-xs bg-slate-950/30 border border-slate-800 rounded-lg p-3">
                   <Row label="Sale price (current value)" value={fmt(currentValue, { money: true })} />
                   <Row label="− Selling costs" value={fmt(existingCalc.sellingCosts, { money: true })} />
-                  <Row label="− Loan payoff" value={fmt(currentBalance, { money: true })} />
+                  <Row label="− Loan payoff" value={fmt(cashPurchase ? 0 : currentBalance, { money: true })} />
                   <Row label="− Depreciation recapture tax" value={fmt(existingCalc.recaptureTax, { money: true })} />
                   <Row label="− Capital gains tax" value={fmt(existingCalc.capGainsTax, { money: true })} />
                   <div className="border-t border-slate-800 pt-1.5 mt-1.5">
@@ -1844,7 +1932,7 @@ const Row = ({ label, value, bold }) => (
 );
 
 // ============ REMODEL PLANNER (Fix & Flip) ============
-const RemodelPlanner = ({ phases, updatePhase, remodel, units, setUnits, overrun, setOverrun, openPhase, setOpenPhase, onUseAsRehab }) => {
+const RemodelPlanner = ({ phases, updatePhase, remodel, units, setUnits, overrun, setOverrun, openPhase, setOpenPhase, extras = [], addExtra, updateExtra, removeExtra, onUseAsRehab }) => {
   // Build a simple sequential timeline. Parallel phases overlap the prior phase.
   let cursor = 0;
   const timeline = phases.map((p) => {
@@ -1971,6 +2059,37 @@ const RemodelPlanner = ({ phases, updatePhase, remodel, units, setUnits, overrun
             )}
           </div>
         ))}
+      </div>
+
+      {/* User-defined extra line items beyond the preset phases */}
+      <div className="mt-4 pt-4 border-t border-slate-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Other Project Expenses</span>
+          <span className="text-[11px] text-slate-500">permits, staging, dumpsters, financing points, etc.</span>
+        </div>
+        {extras.length > 0 && (
+          <div className="space-y-2 mb-2">
+            {extras.map((x) => (
+              <div key={x.id} className="flex items-center gap-2">
+                <input type="text" value={x.label} placeholder="e.g. Permits, Staging, Loan points"
+                  onChange={(e) => updateExtra(x.id, 'label', e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-orange-500" />
+                <div className="flex items-center bg-slate-900 border border-slate-800 rounded overflow-hidden focus-within:border-orange-500 w-32">
+                  <span className="px-2 text-slate-500 text-sm">$</span>
+                  <input type="number" value={x.amount} min="0"
+                    onChange={(e) => updateExtra(x.id, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                    className="w-full bg-transparent py-1.5 text-sm text-slate-100 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                </div>
+                <button onClick={() => removeExtra(x.id)} title="Remove"
+                  className="text-slate-500 hover:text-red-400 text-lg leading-none px-1">×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={addExtra}
+          className="w-full py-2 border border-dashed border-slate-700 hover:border-orange-500 hover:bg-orange-500/5 rounded-lg text-xs text-slate-400 hover:text-orange-400 transition">
+          + Add project expense
+        </button>
       </div>
     </section>
   );
