@@ -550,7 +550,7 @@ export default function App() {
   const [insurance, setInsurance] = useState(1200);
   const [mgmtPct, setMgmtPct] = useState(8);
   const [maintPct, setMaintPct] = useState(5);
-  const [capexPct, setCapexPct] = useState(5);
+  const [capexPct, setCapexPct] = useState(0);
   const [utilities, setUtilities] = useState(0);
   // User-defined extra operating expenses (annual $). Used by rental strategies.
   const [otherExpenses, setOtherExpenses] = useState([]); // [{id, label, amount}]
@@ -952,7 +952,6 @@ export default function App() {
     if (vacancyPct < 5) list.push({ field: 'vacancy', msg: 'Vacancy under 5% is optimistic. Most markets see 5–10%. Check local rental market data.' });
     if (vacancyPct > 15) list.push({ field: 'vacancy', msg: 'Vacancy over 15% is unusually high. Verify this is realistic for the area.' });
     if (maintPct < 5) list.push({ field: 'maint', msg: 'Maintenance under 5% of rent is unrealistic on most properties. Old homes need more.' });
-    if (capexPct < 5) list.push({ field: 'capex', msg: 'CapEx reserves under 5% will hurt you when the roof or HVAC dies. Use 7–10% as a baseline.' });
     if (mgmtPct < 6 && monthlyRent > 0) list.push({ field: 'mgmt', msg: 'Even if you self-manage, account for 8% — your time has value, and you may not always self-manage.' });
     if (calc.cashOnCash > 0 && calc.cashOnCash < 6 && strategy === 'buyhold') {
       list.push({ field: 'rent', msg: `Cash-on-cash of ${fmt(calc.cashOnCash, { pct: true, dec: 1 })} is below the 6% baseline. Either rent is too low or price is too high — verify both with local comps.` });
@@ -1471,7 +1470,6 @@ export default function App() {
                     warn={warnings.some(w => w.field === 'maint')}
                     tip="Routine repairs (% of rent). 5–8% for newer homes, 10%+ for older. Includes the leaky faucet, the broken disposal, etc." />
                   <NumInput label="CapEx Reserve" value={capexPct} onChange={setCapexPct} suffix="%"
-                    warn={warnings.some(w => w.field === 'capex')}
                     tip="Big-ticket items (roof, HVAC, water heater). These WILL happen — fund the reserve now. 5–10% of rent is standard." />
                 </div>
 
