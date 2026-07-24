@@ -272,6 +272,15 @@ const LeadGate = ({ onSuccess }) => {
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ name, email, phone, ts: Date.now() }));
         } catch (e) { /* localStorage may be unavailable */ }
+        // Also set a durable server cookie — survives Safari's 7-day eviction of
+        // localStorage so this device isn't re-prompted weeks later.
+        try {
+          fetch('/api/lead', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, phone }),
+          }).catch(() => { /* non-fatal — localStorage still covers this session */ });
+        } catch (e) { /* ignore */ }
         setStatus('success');
         setTimeout(() => { cleanup(); onSuccess({ name, email, phone }); }, 1400);
       };
@@ -459,13 +468,32 @@ export default function App() {
   const [gateChecked, setGateChecked] = useState(false);
 
   useEffect(() => {
+    let granted = false;
+
+    // Durable first-party cookie set server-side by /api/lead — survives Safari's
+    // 7-day eviction of localStorage / JS-set cookies, so returning visitors on
+    // this device aren't re-prompted.
+    const hasLeadCookie = document.cookie
+      .split(';')
+      .some((c) => c.trim().startsWith('deallab_lead='));
+    if (hasLeadCookie) granted = true;
+
+    // Fast local fallback (also covers dev where the Secure cookie may not stick).
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const data = JSON.parse(stored);
-        if (data && data.email) setAccessGranted(true);
+        if (data && data.email) granted = true;
       }
     } catch (e) { /* ignore */ }
+
+    // Upgrade path: a user we already captured (localStorage) but who has no
+    // durable cookie yet — set one now so they stop getting re-prompted.
+    if (granted && !hasLeadCookie) {
+      fetch('/api/lead', { method: 'POST' }).catch(() => { /* non-fatal */ });
+    }
+
+    setAccessGranted(granted);
     setGateChecked(true);
   }, []);
 
