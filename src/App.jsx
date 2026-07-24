@@ -503,7 +503,8 @@ export default function App() {
   const [downPct, setDownPct] = useState(25);
   const [rate, setRate] = useState(6.57);
   const [useLiveRate, setUseLiveRate] = useState(true);
-  const [term, setTerm] = useState(30); // amortization period (years)
+  const [term, setTerm] = useState(30); // loan term — when the loan matures / balloons (years)
+  const [amortYears, setAmortYears] = useState(30); // amortization schedule the payment is calculated on (years)
   const [ioYears, setIoYears] = useState(0); // interest-only period (years)
   const [cashPurchase, setCashPurchase] = useState(false); // all-cash, no financing
 
@@ -639,10 +640,13 @@ export default function App() {
     const loanAmount = cashPurchase ? 0 : purchasePrice - downPayment;
 
     // Interest-only aware payment. During the IO period the payment is interest
-    // only; afterward the balance amortizes over the remaining term.
+    // only; afterward the balance amortizes over the amortization schedule.
+    // In advanced mode the amortization can differ from the loan term (e.g. a
+    // 5-yr term with a 30-yr amortization and a balloon); otherwise the single
+    // "Loan Term" field drives both.
+    const effAmortYears = advanced ? amortYears : term;
     const ioMonths = Math.round(ioYears * 12);
-    const fullTermMonths = term * 12;
-    const amortMonths = Math.max(1, fullTermMonths - ioMonths);
+    const amortMonths = Math.max(1, effAmortYears * 12 - ioMonths);
     const ioPayment = loanAmount > 0 ? loanAmount * (effRate / 12 / 100) : 0;
     const amortPayment = loanAmount > 0 ? pmt(effRate, amortMonths, loanAmount) : 0;
     // "Current" payment shown to the user: IO payment if in an IO period, else amortizing.
@@ -680,6 +684,12 @@ export default function App() {
     const balAfter1 = amortBalAfter(12);
     const balAfter5 = amortBalAfter(60);
     const yr1Principal = loanAmount - balAfter1;
+
+    // Balloon: if the loan matures (term) before it fully amortizes (effAmortYears),
+    // the remaining principal comes due at the end of the term. Estimated from the
+    // same month-by-month schedule the payment is calculated on.
+    const hasBalloon = advanced && loanAmount > 0 && term < effAmortYears;
+    const balloonBalance = hasBalloon ? amortBalAfter(term * 12) : 0;
     const yr1Appreciation = projValue1 - purchasePrice;
 
     // --- Depreciation & tax shield ---
@@ -739,7 +749,7 @@ export default function App() {
     const refiLoanAmount = arv * 0.75;
     const cashOut = refiLoanAmount - loanAmount;
     const cashLeftIn = totalCashIn - cashOut;
-    const refiPI = pmt(effRate, term * 12, refiLoanAmount);
+    const refiPI = pmt(effRate, effAmortYears * 12, refiLoanAmount);
     const refiCashFlow = (noi - refiPI * 12);
     const brrrCoC = cashLeftIn > 0 ? (refiCashFlow / cashLeftIn) * 100 : (refiCashFlow > 0 ? 999 : 0);
 
@@ -754,10 +764,11 @@ export default function App() {
       projValue1, projValue5, balAfter1, balAfter5, yr1Principal, yr1Appreciation,
       equityNow, equity1, equity5,
       ioMonths, ioPayment, amortPayment,
+      hasBalloon, balloonBalance, effAmortYears,
       annualDepreciation, deprTaxShield, debtYield, capRateYr2,
       initialEquityReturn, totalEquityReturn5, projIRR, projNPV, saleNet5, cashFlows,
     };
-  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, ioYears, cashPurchase, monthlyRent, otherIncome,
+  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncome,
       vacancyPct, propertyTax, insurance, mgmtPct, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
       deprRate, buildingPct, taxRate, discountRate, noiGrowth,
       holdingMonths, sellingCostsPct, stressRent, stressVacancy, stressRate]);
@@ -1085,7 +1096,9 @@ export default function App() {
       { title: 'Financing', rows: cashPurchase
         ? [['Financing', 'All cash — no loan'], ['Total Cash In', m(calc.totalCashIn)]]
         : [['Down Payment', pct(downPct)], ['Interest Rate', pct(rate, 2)],
-           ['Amortization', `${term} yrs`], ['Interest-Only', `${ioYears} yrs`],
+           ['Term', `${term} yrs`], ['Amortization', `${calc.effAmortYears} yrs`],
+           ['Interest-Only', `${ioYears} yrs`],
+           ...(calc.hasBalloon ? [['Balloon due (yr ' + term + ')', m(calc.balloonBalance)]] : []),
            ['Loan Amount', m(calc.loanAmount)], ['Monthly P&I', m(calc.monthlyPI)],
            ['Total Cash In', m(calc.totalCashIn)]] },
       { title: 'Income & Expenses', rows: [
@@ -1311,8 +1324,14 @@ export default function App() {
                   tip="Investment property minimums: 20–25% conventional, 15% with PMI. DSCR loans usually want 20–25%." />
                 <NumInput label="Interest Rate" value={rate} onChange={(v) => { setRate(v); setUseLiveRate(false); }} suffix="%"
                   tip="Live 30-yr rate auto-loaded from Mortgage News Daily. Override with your actual lender quote — investment property rates are typically 0.5–1% higher than owner-occupied." />
-                <NumInput label={advanced ? 'Amortization' : 'Loan Term'} value={term} onChange={setTerm} suffix="yrs"
-                  tip="Loan term / amortization period. 30-year is standard for rentals; 15-year builds equity faster but kills cash flow." />
+                <NumInput label={advanced ? 'Term' : 'Loan Term'} value={term} onChange={setTerm} suffix="yrs"
+                  tip={advanced
+                    ? 'Loan term — how long until the loan matures or balloons. On commercial/DSCR loans this is often shorter than the amortization (e.g. a 5-yr term with a balloon). Set equal to Amortization for a normal fully-amortizing loan.'
+                    : 'Loan term / amortization period. 30-year is standard for rentals; 15-year builds equity faster but kills cash flow.'} />
+                {advanced && (
+                  <NumInput label="Amortization" value={amortYears} onChange={setAmortYears} suffix="yrs"
+                    tip="Amortization — the schedule the monthly payment is calculated on. 30-year is standard. A longer amortization than term lowers the payment but leaves a balloon balance due when the loan matures." />
+                )}
                 {advanced && (
                   <NumInput label="Interest-Only" value={ioYears} onChange={setIoYears} suffix="yrs" step={0.5}
                     tip="Interest-only period at the start of the loan. During IO the payment is interest only (lower payment, higher cash flow, but no principal paydown). Common on DSCR and commercial loans. 0 = fully amortizing from day one." />
@@ -1325,6 +1344,17 @@ export default function App() {
                   </label>
                 </div>
               </div>
+              )}
+              {!cashPurchase && calc.hasBalloon && (
+                <div className="flex items-start gap-2 text-xs text-blue-200/90 bg-blue-950/30 border border-blue-800/50 rounded-lg p-3">
+                  <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-blue-400" />
+                  <span>
+                    <span className="font-semibold text-blue-300">Balloon payment.</span>{' '}
+                    The payment amortizes over {calc.effAmortYears} yrs, but the loan matures at year {term} —
+                    an estimated <span className="font-semibold text-blue-100">{fmt(calc.balloonBalance, { money: true })}</span>{' '}
+                    balloon balance comes due then. You'll need to refinance, sell, or pay it off at that point.
+                  </span>
+                </div>
               )}
             </section>
             </>)}
