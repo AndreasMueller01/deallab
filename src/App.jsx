@@ -491,6 +491,10 @@ export default function App() {
   const [rateChange, setRateChange] = useState(null);
   const [rateLoading, setRateLoading] = useState(false);
 
+  // Live 10-yr Treasury yield (from our /api/treasury serverless function).
+  // Null until loaded; stays null and renders nothing if the fetch fails.
+  const [treasury, setTreasury] = useState(null); // { yield, date } | null
+
   // Property
   const [address, setAddress] = useState('');
   const [purchasePrice, setPurchasePrice] = useState(400000);
@@ -995,6 +999,24 @@ export default function App() {
   // Pull the live rate on first load.
   useEffect(() => { fetchLiveRate(); }, []);
 
+  // Pull the live 10-yr Treasury yield on first load. Fails silently — the
+  // badge simply doesn't render if the endpoint is unavailable (e.g. in local
+  // `vite` dev where the serverless function isn't running).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/treasury');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && typeof data.yield === 'number' && !isNaN(data.yield)) {
+          setTreasury({ yield: data.yield, date: data.date });
+        }
+      } catch (e) { /* non-fatal — leave treasury null */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const refreshRate = () => { fetchLiveRate(); };
 
   // ============ EXPORT PAYLOAD ============
@@ -1171,6 +1193,18 @@ export default function App() {
                 <RefreshCw className={`w-3 h-3 ${rateLoading ? 'animate-spin' : ''}`} />
               </button>
             </div>
+            {treasury && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+                <span className="text-slate-400">10-yr UST:</span>
+                <span className="font-bold text-sky-400">{treasury.yield.toFixed(2)}%</span>
+                {treasury.date && (
+                  <span className="text-slate-600">
+                    · {(() => { const [, mo, d] = treasury.date.split('-'); return `${+mo}/${+d}`; })()}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </header>
