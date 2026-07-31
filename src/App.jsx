@@ -546,7 +546,7 @@ export default function App() {
   const [taxRate, setTaxRate] = useState(24); // marginal tax rate for depreciation shield
 
   // Projection / discounting
-  const [discountRate, setDiscountRate] = useState(10); // for NPV
+  const [discountRate, setDiscountRate] = useState(8); // for NPV
   const [noiGrowth, setNoiGrowth] = useState(2); // stabilized NOI growth %/yr
 
   // Income — single or multifamily
@@ -1165,7 +1165,7 @@ export default function App() {
         ['Value Yr 1 / Yr 5', `${m(calc.projValue1)} / ${m(calc.projValue5)}`],
         ['Equity Yr 1 / Yr 5', `${m(calc.equity1)} / ${m(calc.equity5)}`],
         ['5-yr IRR', calc.projIRR === null ? '—' : pct(calc.projIRR * 100)],
-        ['NPV @ ' + discountRate + '%', m(calc.projNPV)] ] },
+        ...(advanced ? [['NPV @ ' + discountRate + '%', m(calc.projNPV)]] : []) ] },
     ];
     if (strategy === 'brrrr') {
       rentalRows.push({ title: 'BRRRR — Post-Refi', rows: [
@@ -1674,7 +1674,7 @@ export default function App() {
                       <Tip text="A stabilized-NOI projection: 5 years of cash flow (NOI growing at your assumed rate, minus debt service) plus a Year-5 sale at the appreciated value net of selling costs. IRR and NPV update live as you move the stress sliders above — that's your sensitivity analysis." />
                     </h3>
                     <div className="w-28">
-                      <NumInput label="Discount Rate" value={discountRate} onChange={setDiscountRate} suffix="%" step={0.5}
+                      <NumInput label="NPV Discount Rate" value={discountRate} onChange={setDiscountRate} suffix="%" step={0.5}
                         tip="Your required rate of return, used to discount the projected cash flows for NPV. A positive NPV means the deal beats your hurdle rate." />
                     </div>
                   </div>
