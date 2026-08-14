@@ -99,7 +99,7 @@ const Tip = ({ text }) => (
 );
 
 // ============ INPUT ============
-const NumInput = ({ label, value, onChange, prefix, suffix, tip, step = 1, warn }) => (
+const NumInput = ({ label, value, onChange, prefix, suffix, tip, step = 1, warn, after }) => (
   <div>
     <label className="flex items-center text-xs font-medium text-slate-400 mb-1">
       {label}
@@ -116,6 +116,7 @@ const NumInput = ({ label, value, onChange, prefix, suffix, tip, step = 1, warn 
       />
       {suffix && <span className="px-2.5 text-slate-500 text-sm">{suffix}</span>}
     </div>
+    {after}
   </div>
 );
 
@@ -556,7 +557,18 @@ export default function App() {
     { id: 1, label: '1BR', count: 2, rent: 1400 },
     { id: 2, label: '2BR', count: 2, rent: 1800 },
   ]);
-  const [otherIncome, setOtherIncome] = useState(0);
+  // User-defined other income line items (monthly $) — laundry, parking, pet
+  // fees, storage, etc. Mirrors the Other Operating Expenses list below.
+  const [otherIncomes, setOtherIncomes] = useState([]); // [{id, label, amount}]
+  const addOtherIncome = () =>
+    setOtherIncomes((xs) => [...xs, { id: Math.max(0, ...xs.map(x => x.id)) + 1, label: '', amount: 0 }]);
+  const updateOtherIncome = (id, field, value) =>
+    setOtherIncomes((xs) => xs.map(x => x.id === id ? { ...x, [field]: value } : x));
+  const removeOtherIncome = (id) =>
+    setOtherIncomes((xs) => xs.filter(x => x.id !== id));
+  const otherIncomeTotal = useMemo(
+    () => otherIncomes.reduce((s, x) => s + (Number(x.amount) || 0), 0), [otherIncomes]); // $/mo
+
   const [vacancyPct, setVacancyPct] = useState(5);
 
   const monthlyRent = useMemo(() => {
@@ -582,9 +594,13 @@ export default function App() {
   const [propertyTax, setPropertyTax] = useState(2400);
   const [insurance, setInsurance] = useState(1200);
   const [mgmtPct, setMgmtPct] = useState(8);
+  // Advanced only: bill property management on collected RENT only, instead of
+  // on all effective gross income (rent + other income). Some PM agreements
+  // exclude laundry/parking/storage revenue from the management fee.
+  const [mgmtRentOnly, setMgmtRentOnly] = useState(false);
   const [maintPct, setMaintPct] = useState(5);
   const [capexPct, setCapexPct] = useState(0);
-  const [utilities, setUtilities] = useState(0);
+  const [utilities, setUtilities] = useState(0); // annual $ (owner-paid utilities)
   // User-defined extra operating expenses (annual $). Used by rental strategies.
   const [otherExpenses, setOtherExpenses] = useState([]); // [{id, label, amount}]
   const addOtherExpense = () =>
@@ -656,14 +672,22 @@ export default function App() {
     const effVacancy = vacancyPct + stressVacancy;
     const effRate = rate + stressRate;
 
-    const grossAnnualRent = effRent * 12 + otherIncome * 12;
-    const vacancyLoss = grossAnnualRent * (effVacancy / 100);
+    // Vacancy applies to RENTAL income only. Other income (laundry, parking,
+    // pet fees, storage) is collected regardless of unit occupancy, so it is
+    // added back after the vacancy haircut.
+    const annualRent = effRent * 12;
+    const annualOtherIncome = otherIncomeTotal * 12;
+    const grossAnnualRent = annualRent + annualOtherIncome;
+    const vacancyLoss = annualRent * (effVacancy / 100);
     const effectiveGrossIncome = grossAnnualRent - vacancyLoss;
 
-    const mgmt = effectiveGrossIncome * (mgmtPct / 100);
+    // Management fee base: collected rent only, or all effective gross income.
+    // The "rent only" toggle is Advanced-mode; ignore it in basic mode.
+    const mgmtBase = (advanced && mgmtRentOnly) ? annualRent - vacancyLoss : effectiveGrossIncome;
+    const mgmt = mgmtBase * (mgmtPct / 100);
     const maint = effRent * 12 * (maintPct / 100);
     const capex = effRent * 12 * (capexPct / 100);
-    const operatingExpenses = propertyTax + insurance + utilities * 12 + mgmt + maint + capex + otherOpexTotal;
+    const operatingExpenses = propertyTax + insurance + utilities + mgmt + maint + capex + otherOpexTotal;
 
     const noi = effectiveGrossIncome - operatingExpenses;
 
@@ -774,7 +798,7 @@ export default function App() {
 
     const mao = arv * 0.7 - rehab;
     const sellingCosts = arv * (sellingCostsPct / 100);
-    const holdingCosts = (propertyTax / 12 + insurance / 12 + utilities + monthlyPI) * holdingMonths;
+    const holdingCosts = (propertyTax / 12 + insurance / 12 + utilities / 12 + monthlyPI) * holdingMonths;
     const flipProfit = arv - purchasePrice - rehab - closingCosts - sellingCosts - holdingCosts;
     const flipRoi = totalCashIn > 0 ? (flipProfit / (totalCashIn + holdingCosts)) * 100 : 0;
 
@@ -800,8 +824,8 @@ export default function App() {
       annualDepreciation, deprTaxShield, debtYield, capRateYr2,
       initialEquityReturn, totalEquityReturn5, projIRR, projNPV, saleNet5, cashFlows,
     };
-  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncome,
-      vacancyPct, propertyTax, insurance, mgmtPct, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
+  }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncomeTotal,
+      vacancyPct, propertyTax, insurance, mgmtPct, mgmtRentOnly, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
       deprRate, buildingPct, taxRate, discountRate, noiGrowth,
       holdingMonths, sellingCostsPct, stressRent, stressVacancy, stressRate]);
 
@@ -812,13 +836,17 @@ export default function App() {
     const effVacancy = vacancyPct + stressVacancy;
     const effRate = currentRate + stressRate;
 
-    const grossAnnualRent = effRent * 12 + otherIncome * 12;
-    const vacancyLoss = grossAnnualRent * (effVacancy / 100);
+    // Vacancy applies to RENTAL income only — see the note in `calc` above.
+    const annualRent = effRent * 12;
+    const annualOtherIncome = otherIncomeTotal * 12;
+    const grossAnnualRent = annualRent + annualOtherIncome;
+    const vacancyLoss = annualRent * (effVacancy / 100);
     const egi = grossAnnualRent - vacancyLoss;
-    const mgmt = egi * (mgmtPct / 100);
+    const mgmtBase = (advanced && mgmtRentOnly) ? annualRent - vacancyLoss : egi;
+    const mgmt = mgmtBase * (mgmtPct / 100);
     const maint = effRent * 12 * (maintPct / 100);
     const capex = effRent * 12 * (capexPct / 100);
-    const opex = propertyTax + insurance + utilities * 12 + mgmt + maint + capex + otherOpexTotal;
+    const opex = propertyTax + insurance + utilities + mgmt + maint + capex + otherOpexTotal;
     const noi = egi - opex;
 
     // All-cash (owned free & clear) zeroes the loan.
@@ -909,7 +937,7 @@ export default function App() {
       sellingCosts, adjustedBasis, totalGain, recaptureTax, capGainsTax, totalTaxIfSell, netSaleProceeds,
       redeployReturn, equity1031, newLoan1031, ltv1031, taxesDeferred,
     };
-  }, [monthlyRent, otherIncome, vacancyPct, mgmtPct, maintPct, capexPct, propertyTax, insurance, utilities, otherOpexTotal,
+  }, [monthlyRent, otherIncomeTotal, vacancyPct, mgmtPct, mgmtRentOnly, advanced, maintPct, capexPct, propertyTax, insurance, utilities, otherOpexTotal,
       currentValue, currentBalance, currentRate, yearsRemaining, ioYears, cashPurchase, apprPct, originalBasis, accumDepr,
       buildingPct, deprRate, taxRate, sellingCostsPct, capGainsRate, recaptureRate, stateTaxRate,
       discountRate, replacementCost, noiGrowth, stressRent, stressVacancy, stressRate]);
@@ -1113,13 +1141,17 @@ export default function App() {
           ['Current Equity', m(existingCalc.equity)], ['Original Basis', m(originalBasis)],
           ['Depreciation Taken', m(accumDepr)] ] },
         { title: 'Performance', rows: [
+          ...otherIncomes.filter(x => x.label || x.amount).map(x => [`Other income: ${x.label || 'item'}`, m(Number(x.amount) || 0) + '/mo']),
+          ...(otherIncomeTotal > 0 ? [['Other Income (total)', m(otherIncomeTotal) + '/mo']] : []),
+          ['Utilities (yr)', m(utilities)],
           ...otherExpenses.filter(x => x.label || x.amount).map(x => [`Other expense: ${x.label || 'item'}`, m(Number(x.amount) || 0) + '/yr']),
-          ['Monthly Cash Flow', m(existingCalc.cashFlow / 12)], ['NOI (annual)', m(existingCalc.noi)],
+          ...(advanced ? [['Mgmt Fee Base', mgmtRentOnly ? 'Collected rent only' : 'All income (EGI)']] : []),
+          ['Monthly Cash Flow', m(existingCalc.cashFlow / 12)], ['NOI (yr)', m(existingCalc.noi)],
           ['Cap Rate', pct(existingCalc.capRate, 2)], ['Debt Yield', pct(existingCalc.debtYield)],
           ['DSCR', fmt(existingCalc.dscr, { dec: 2 })],
           ['Return on Equity', pct(existingCalc.roe)], ['Cash-on-Equity', pct(existingCalc.cashOnEquity)] ] },
         { title: 'Hold vs. Sell', rows: [
-          ['Keep: annual return', m(existingCalc.totalReturnHold)],
+          ['Keep: total return (yr)', m(existingCalc.totalReturnHold)],
           ['Selling costs', m(existingCalc.sellingCosts)],
           ['Depreciation recapture tax', m(existingCalc.recaptureTax)],
           ['Capital gains tax', m(existingCalc.capGainsTax)],
@@ -1130,7 +1162,7 @@ export default function App() {
           ['Equity to Reinvest', m(existingCalc.equity1031)], ['New Loan Needed', m(existingCalc.newLoan1031)],
           ['New LTV', pct(existingCalc.ltv1031, 0)] ] },
       ];
-      base.charts = [{ title: 'Hold vs. Sell (annual $)', bars: [
+      base.charts = [{ title: 'Hold vs. Sell ($/yr)', bars: [
         { label: 'Keep — total return', value: existingCalc.totalReturnHold, display: m(existingCalc.totalReturnHold), color: '#10b981' },
         { label: `Sell & redeploy @ ${discountRate}%`, value: existingCalc.redeployReturn, display: m(existingCalc.redeployReturn), color: '#f97316' },
       ] }];
@@ -1153,15 +1185,20 @@ export default function App() {
            ['Total Cash In', m(calc.totalCashIn)]] },
       { title: 'Income & Expenses', rows: [
         ['Monthly Rent', m(monthlyRent)], ['Vacancy', pct(vacancyPct)],
-        ...otherExpenses.filter(x => x.label || x.amount).map(x => [`Other: ${x.label || 'expense'}`, m(Number(x.amount) || 0) + '/yr']),
-        ['Operating Expenses', m(calc.operatingExpenses)], ['NOI (annual)', m(calc.noi)] ] },
+        ...otherIncomes.filter(x => x.label || x.amount).map(x => [`Other income: ${x.label || 'item'}`, m(Number(x.amount) || 0) + '/mo']),
+        ...(otherIncomeTotal > 0 ? [['Other Income (total)', m(otherIncomeTotal) + '/mo']] : []),
+        ['Gross Scheduled Income (yr)', m(calc.grossAnnualRent)],
+        ['Utilities (yr)', m(utilities)],
+        ...otherExpenses.filter(x => x.label || x.amount).map(x => [`Other expense: ${x.label || 'item'}`, m(Number(x.amount) || 0) + '/yr']),
+        ...(advanced ? [['Mgmt Fee Base', mgmtRentOnly ? 'Collected rent only' : 'All income (EGI)']] : []),
+        ['Operating Expenses (yr)', m(calc.operatingExpenses)], ['NOI (yr)', m(calc.noi)] ] },
       { title: 'Key Metrics', rows: [
         ['Cash-on-Cash', pct(calc.cashOnCash)], ['Cap Rate', pct(calc.capRate, 2)],
         ['DSCR', fmt(calc.dscr, { dec: 2 })], ['Debt Yield', pct(calc.debtYield)],
         ['Monthly Cash Flow', m(calc.monthlyCashFlow)], ['Total ROI Yr 1', pct(calc.totalRoi)],
         ['ROE Yr 1', pct(calc.initialEquityReturn)], ['5-yr Total Return', pct(calc.totalEquityReturn5, 0)] ] },
       { title: 'Tax & Projection', rows: [
-        ['Annual Depreciation', m(calc.annualDepreciation)], ['Depr. Tax Shield', m(calc.deprTaxShield)],
+        ['Depreciation (yr)', m(calc.annualDepreciation)], ['Depr. Tax Shield', m(calc.deprTaxShield)],
         ['Value Yr 1 / Yr 5', `${m(calc.projValue1)} / ${m(calc.projValue5)}`],
         ['Equity Yr 1 / Yr 5', `${m(calc.equity1)} / ${m(calc.equity5)}`],
         ['5-yr IRR', calc.projIRR === null ? '—' : pct(calc.projIRR * 100)],
@@ -1174,7 +1211,7 @@ export default function App() {
         ['Equity in Deal', m(arv - calc.refiLoanAmount)] ] });
     }
     base.sections = rentalRows;
-    base.charts = [{ title: 'Annual Cash Flow Waterfall', bars: [
+    base.charts = [{ title: 'Cash Flow Waterfall (yr)', bars: [
       { label: 'Gross Rent', value: calc.grossAnnualRent, display: m(calc.grossAnnualRent), color: '#10b981' },
       { label: 'Operating Exp.', value: calc.operatingExpenses, display: m(calc.operatingExpenses), color: '#eab308' },
       { label: 'Debt Service', value: calc.annualDebtService, display: m(calc.annualDebtService), color: '#f97316' },
@@ -1185,6 +1222,51 @@ export default function App() {
 
   const exportPDF = () => openPrintReport(buildPayload());
   const exportCSV = () => downloadCSV(buildPayload());
+
+  // Repeatable "Other Income" line items (monthly $). Rendered in both the
+  // single-unit and multifamily branches of the Rental Income section.
+  const otherIncomeBlock = (
+    <div className="mt-4 pt-4 border-t border-slate-800">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          Other Income <span className="text-slate-500 normal-case font-normal">(mo)</span>
+        </span>
+        {otherIncomeTotal > 0 && (
+          <span className="text-[11px] font-semibold text-orange-400">
+            ${otherIncomeTotal.toLocaleString()}/mo &middot; ${(otherIncomeTotal * 12).toLocaleString()}/yr
+          </span>
+        )}
+      </div>
+      <div className="text-xs text-slate-500 mb-2">
+        Laundry, parking, pet fees, storage, vending. Add a row per source. Vacancy is <em className="text-slate-400 not-italic font-semibold">not</em> applied
+        to these — enter what you realistically expect to collect each month.
+      </div>
+      {otherIncomes.length > 0 && (
+        <div className="space-y-2 mb-2">
+          {otherIncomes.map((x) => (
+            <div key={x.id} className="flex items-center gap-2">
+              <input type="text" value={x.label} placeholder="e.g. Laundry, Parking, Pet fees"
+                onChange={(e) => updateOtherIncome(x.id, 'label', e.target.value)}
+                className="flex-1 bg-slate-900 border border-slate-800 rounded px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-orange-500" />
+              <div className="flex items-center bg-slate-900 border border-slate-800 rounded overflow-hidden focus-within:border-orange-500 w-36">
+                <span className="px-2 text-slate-500 text-sm">$</span>
+                <input type="number" value={x.amount} min="0"
+                  onChange={(e) => updateOtherIncome(x.id, 'amount', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                  className="w-full bg-transparent py-1.5 text-sm text-slate-100 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                <span className="px-2 text-slate-500 text-[11px] whitespace-nowrap">/mo</span>
+              </div>
+              <button onClick={() => removeOtherIncome(x.id)} title="Remove"
+                className="text-slate-500 hover:text-red-400 text-lg leading-none px-1">&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={addOtherIncome}
+        className="w-full py-2 border border-dashed border-slate-700 hover:border-orange-500 hover:bg-orange-500/5 rounded-lg text-xs text-slate-400 hover:text-orange-400 transition">
+        + Add other income (mo)
+      </button>
+    </div>
+  );
 
   // Which calc drives the stress-test IRR/NPV display for the active tab.
   const stressCalc = strategy === 'existing' ? existingCalc : calc;
@@ -1448,15 +1530,16 @@ export default function App() {
                 </div>
 
                 {propertyType === 'single' ? (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <>
+                  <div className="grid grid-cols-2 gap-3">
                     <NumInput label="Monthly Rent" value={singleRent} onChange={setSingleRent} prefix="$"
                       tip="GET THIS RIGHT. Don't use Zillow estimates alone. Call 2–3 local property managers, check Rentometer, look at active rentals on Zillow/Apartments.com in 0.5 mile radius. Garbage in = garbage out." />
-                    <NumInput label="Other Income (mo)" value={otherIncome} onChange={setOtherIncome} prefix="$"
-                      tip="Laundry, parking, pet fees, storage. Usually negligible on SFRs." />
                     <NumInput label="Vacancy" value={vacancyPct} onChange={setVacancyPct} suffix="%"
                       warn={warnings.some(w => w.field === 'vacancy')}
-                      tip="Most markets see 5–10% vacancy. Don't go below 5% — even great tenants eventually move out, and turnover takes weeks." />
+                      tip="Most markets see 5–10% vacancy. Don't go below 5% — even great tenants eventually move out, and turnover takes weeks. Applied to rent only, not to other income." />
                   </div>
+                  {otherIncomeBlock}
+                  </>
                 ) : (
                   <div className="space-y-3">
                     <div className="text-xs text-slate-500 mb-2">
@@ -1532,12 +1615,11 @@ export default function App() {
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 pt-2">
-                      <NumInput label="Other Income (mo)" value={otherIncome} onChange={setOtherIncome} prefix="$"
-                        tip="Laundry, parking, pet fees, storage, vending. Multifamily often has meaningful 'other' income — don't skip this." />
                       <NumInput label="Vacancy" value={vacancyPct} onChange={setVacancyPct} suffix="%"
                         warn={warnings.some(w => w.field === 'vacancy')}
-                        tip="Multifamily often runs 5–8% in healthy markets. C-class properties or distressed neighborhoods can run 10%+." />
+                        tip="Multifamily often runs 5–8% in healthy markets. C-class properties or distressed neighborhoods can run 10%+. Applied to rent only, not to other income." />
                     </div>
+                    {otherIncomeBlock}
                   </div>
                 )}
               </section>
@@ -1553,11 +1635,22 @@ export default function App() {
                     tip="Get this from the county assessor or current listing — don't estimate. Reassessments can spike taxes 20–50% after purchase in some states." />
                   <NumInput label="Insurance (yr)" value={insurance} onChange={setInsurance} prefix="$"
                     tip="Landlord policies cost more than homeowner. Get an actual quote — premiums have spiked 20–40% in recent years, especially in FL, TX, CA." />
-                  <NumInput label="Utilities (mo)" value={utilities} onChange={setUtilities} prefix="$"
-                    tip="Only what owner pays — usually water/sewer/trash on multifamily, $0 on SFR." />
+                  <NumInput label="Utilities (yr)" value={utilities} onChange={setUtilities} prefix="$"
+                    tip="Annual total — only what the owner pays, usually water/sewer/trash on multifamily, $0 on SFR. If you know the monthly figure, multiply by 12." />
                   <NumInput label="Property Mgmt" value={mgmtPct} onChange={setMgmtPct} suffix="%"
                     warn={warnings.some(w => w.field === 'mgmt')}
-                    tip="Typically 8–10% of collected rent + 50–100% of first month's rent for placement. Even if self-managing, model 8% — your time has value." />
+                    tip="Typically 8–10% of collected rent + 50–100% of first month's rent for placement. Even if self-managing, model 8% — your time has value."
+                    after={advanced && (
+                      <label className="flex items-start gap-1.5 mt-1.5 cursor-pointer group">
+                        <input type="checkbox" checked={mgmtRentOnly}
+                          onChange={(e) => setMgmtRentOnly(e.target.checked)}
+                          className="mt-[1px] accent-orange-500 w-3.5 h-3.5 shrink-0 cursor-pointer" />
+                        <span className="flex items-center text-[11px] leading-tight text-slate-400 group-hover:text-slate-300">
+                          Rent only
+                          <Tip text="Off (default): the fee is charged on all effective gross income — collected rent plus other income. On: the fee is charged on collected rent only, so laundry, parking, pet fees and storage revenue are excluded. Match this to what your PM agreement actually says." />
+                        </span>
+                      </label>
+                    )} />
                   <NumInput label="Maintenance" value={maintPct} onChange={setMaintPct} suffix="%"
                     warn={warnings.some(w => w.field === 'maint')}
                     tip="Routine repairs (% of rent). 5–8% for newer homes, 10%+ for older. Includes the leaky faucet, the broken disposal, etc." />
@@ -1567,7 +1660,10 @@ export default function App() {
 
                 <div className="mt-4 pt-4 border-t border-slate-800">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Other Operating Expenses <span className="text-slate-500 normal-case font-normal">(annual)</span></span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Other Operating Expenses <span className="text-slate-500 normal-case font-normal">(yr)</span></span>
+                    {otherOpexTotal > 0 && (
+                      <span className="text-[11px] font-semibold text-orange-400">${otherOpexTotal.toLocaleString()}/yr</span>
+                    )}
                   </div>
                   {otherExpenses.length > 0 && (
                     <div className="space-y-2 mb-2">
@@ -1591,7 +1687,7 @@ export default function App() {
                   )}
                   <button onClick={addOtherExpense}
                     className="w-full py-2 border border-dashed border-slate-700 hover:border-orange-500 hover:bg-orange-500/5 rounded-lg text-xs text-slate-400 hover:text-orange-400 transition">
-                    + Add operating expense (annual)
+                    + Add operating expense (yr)
                   </button>
                 </div>
               </section>
@@ -1627,7 +1723,8 @@ export default function App() {
                     tip="Agent commissions (5–6%) + closing costs (1–2%). Total 6–8% of ARV." />
                   <NumInput label="Property Tax (yr)" value={propertyTax} onChange={setPropertyTax} prefix="$" />
                   <NumInput label="Insurance (yr)" value={insurance} onChange={setInsurance} prefix="$" />
-                  <NumInput label="Utilities (mo)" value={utilities} onChange={setUtilities} prefix="$" />
+                  <NumInput label="Utilities (yr)" value={utilities} onChange={setUtilities} prefix="$"
+                    tip="Annual total the owner pays while holding the property. Divided by 12 to build the monthly holding cost." />
                 </div>
               </section>
             )}
@@ -1703,7 +1800,7 @@ export default function App() {
                 <p className="text-xs text-slate-500 mb-4">If you sold today and paid the taxes, how hard would the freed-up equity have to work to beat simply holding?</p>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                   <div className="bg-slate-950/40 border border-slate-800 rounded-lg p-3">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Keep: Annual Return</div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Keep: Total Return (yr)</div>
                     <div className="text-lg font-bold text-emerald-400 mt-1">{fmt(existingCalc.totalReturnHold, { money: true })}</div>
                     <div className="text-[10px] text-slate-500">{fmt(existingCalc.roe, { pct: true, dec: 1 })} on equity</div>
                   </div>
@@ -1825,7 +1922,7 @@ export default function App() {
                   <Stat label="DSCR" value={fmt(existingCalc.dscr, { dec: 2 })}
                     status={existingCalc.dscr >= 1.25 ? 'good' : existingCalc.dscr >= 1.0 ? 'warn' : 'bad'}
                     tip="NOI ÷ debt service on your current loan. Below 1.0 means it can't cover its mortgage." />
-                  <Stat label="NOI (annual)" value={fmt(existingCalc.noi, { money: true })}
+                  <Stat label="NOI (yr)" value={fmt(existingCalc.noi, { money: true })}
                     tip="Net operating income — gross income minus operating expenses, before debt service." />
                   {advanced && (<>
                     <Stat label="Debt Yield" value={fmt(existingCalc.debtYield, { pct: true, dec: 1 })}
@@ -1850,7 +1947,7 @@ export default function App() {
                   <Stat label="Monthly Cash Flow" value={fmt(calc.monthlyCashFlow, { money: true })}
                     status={calc.monthlyCashFlow >= 200 ? 'good' : calc.monthlyCashFlow >= 0 ? 'neutral' : 'bad'}
                     tip="What hits your bank account each month after ALL expenses including reserves." />
-                  <Stat label="NOI (annual)" value={fmt(calc.noi, { money: true })}
+                  <Stat label="NOI (yr)" value={fmt(calc.noi, { money: true })}
                     tip="Net Operating Income. Gross income minus operating expenses, before debt service." />
                   <Stat label="Total ROI Yr 1" value={fmt(calc.totalRoi, { pct: true, dec: 1 })}
                     sub={`incl. paydown + ${apprPct}% apprec.`}
@@ -1886,7 +1983,7 @@ export default function App() {
                   <Calculator className="w-3.5 h-3.5 text-orange-500" /> Returns &amp; Tax
                 </h3>
                 <div className="grid grid-cols-2 gap-2.5">
-                  <Stat label="Annual Depreciation" value={fmt(existingCalc.annualDepreciation, { money: true })}
+                  <Stat label="Depreciation (yr)" value={fmt(existingCalc.annualDepreciation, { money: true })}
                     tip="Non-cash deduction = depreciable basis (building %) × original basis × depreciation rate. Shelters rental income from tax." />
                   <Stat label="Depr. Tax Shield" value={fmt(existingCalc.deprTaxShield, { money: true })}
                     status="good"
@@ -1913,7 +2010,7 @@ export default function App() {
                   <Stat label="Total Return — 5yr" value={fmt(calc.totalEquityReturn5, { pct: true, dec: 0 })}
                     sub="cumulative on equity"
                     tip="Cumulative 5-year return on initial equity: total cash flow + principal paid down + appreciation + tax shield over 5 years, divided by cash invested." />
-                  <Stat label="Annual Depreciation" value={fmt(calc.annualDepreciation, { money: true })}
+                  <Stat label="Depreciation (yr)" value={fmt(calc.annualDepreciation, { money: true })}
                     tip="Non-cash deduction = depreciable basis (building %) × purchase price × depreciation rate. Shelters rental income from tax." />
                   <Stat label="Depr. Tax Shield" value={fmt(calc.deprTaxShield, { money: true })}
                     status="good"
