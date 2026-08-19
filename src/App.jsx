@@ -92,7 +92,7 @@ const irr = (cfs) => {
 const Tip = ({ text }) => (
   <span className="group relative inline-block ml-1 align-middle">
     <Info className="w-3.5 h-3.5 text-slate-400 hover:text-slate-200 cursor-help inline" />
-    <span className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-2.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg shadow-xl pointer-events-none">
+    <span className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 sm:w-64 max-w-[calc(100vw-2rem)] p-2.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg shadow-xl pointer-events-none">
       {text}
     </span>
   </span>
@@ -1272,7 +1272,7 @@ export default function App() {
   const stressCalc = strategy === 'existing' ? existingCalc : calc;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100" style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system' }}>
+    <div className="min-h-screen overflow-x-clip bg-slate-950 text-slate-100" style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system' }}>
       {gateChecked && !accessGranted && (
         <LeadGate onSuccess={() => setAccessGranted(true)} />
       )}
@@ -1288,7 +1288,7 @@ export default function App() {
               <p className="text-[10px] text-slate-500 -mt-0.5">Real estate underwriting that doesn't suck</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-slate-400">30-yr fixed:</span>
@@ -1342,7 +1342,7 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={toggleAdvanced}
               title={advanced ? 'Hide the advanced underwriting features' : 'Show advanced underwriting features (depreciation, IRR/NPV, debt yield, 1031, remodel planner, and more)'}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition whitespace-nowrap ${
