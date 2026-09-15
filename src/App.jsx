@@ -3,6 +3,21 @@ import { Flame, Home, Wrench, TrendingUp, AlertTriangle, CheckCircle2, Info, Ref
 import { openPrintReport, downloadCSV } from './report';
 
 const JOTFORM_ID = '261466092010044';
+
+// Short-term flip financing. These are ONE parametric model, not three code
+// paths: the products differ only in where the dials start. Every field stays
+// editable, so a deal that does not match any preset is still modelable.
+//   hard    — points + interest-only, ARV-capped, interest served monthly
+//   private — a partner or individual: rarely points, no ARV test, and interest
+//             is commonly accrued to payoff rather than paid during the hold,
+//             which frees up cash even though total cost is the same
+//   bridge  — bank-ish short-term debt: cheaper than hard money, fewer points,
+//             but usually carries an exit fee hard money does not
+const FLIP_FINANCING = {
+  hard:    { label: 'Hard money',    ltc: 85, arv: 70, rate: 11,  points: 2,   exitFee: 0, basis: 'drawn', paid: 'monthly' },
+  private: { label: 'Private money', ltc: 90, arv: 0,  rate: 9,   points: 0,   exitFee: 0, basis: 'drawn', paid: 'accrued' },
+  bridge:  { label: 'Bridge loan',   ltc: 80, arv: 75, rate: 9.5, points: 1.5, exitFee: 1, basis: 'drawn', paid: 'monthly' },
+};
 const STORAGE_KEY = 'deallab_access_granted_v1';
 
 // The public home of this app is an iframe on nashvilleinvestoragent.com/deal-analyzer.
@@ -615,9 +630,9 @@ export default function App() {
 
   // Property
   const [address, setAddress] = useState('');
-  const [purchasePrice, setPurchasePrice] = useState(400000);
-  const [closingCostsPct, setClosingCostsPct] = useState(1);
-  const [rehab, setRehab] = useState(0);
+  const [purchasePrice, setPurchasePrice] = useState(320000);
+  const [closingCostsPct, setClosingCostsPct] = useState(1.5);   // guide: 1.5-3% typical
+  const [rehab, setRehab] = useState(0);   // rentals start clean; the flip tab seeds its own
   const [arv, setArv] = useState(480000);
   const [apprPct, setApprPct] = useState(3); // annual appreciation, compounded
 
@@ -661,7 +676,7 @@ export default function App() {
   const otherIncomeTotal = useMemo(
     () => otherIncomes.reduce((s, x) => s + (Number(x.amount) || 0), 0), [otherIncomes]); // $/mo
 
-  const [vacancyPct, setVacancyPct] = useState(5);
+  const [vacancyPct, setVacancyPct] = useState(7);     // guide: 5-10%, and warns below 5%
 
   const monthlyRent = useMemo(() => {
     if (propertyType === 'single') return singleRent;
@@ -684,14 +699,14 @@ export default function App() {
 
   // Expenses
   const [propertyTax, setPropertyTax] = useState(2400);
-  const [insurance, setInsurance] = useState(1200);
+  const [insurance, setInsurance] = useState(1800);
   const [mgmtPct, setMgmtPct] = useState(8);
   // Advanced only: bill property management on collected RENT only, instead of
   // on all effective gross income (rent + other income). Some PM agreements
   // exclude laundry/parking/storage revenue from the management fee.
   const [mgmtRentOnly, setMgmtRentOnly] = useState(false);
   const [maintPct, setMaintPct] = useState(5);
-  const [capexPct, setCapexPct] = useState(0);
+  const [capexPct, setCapexPct] = useState(6);         // a zero reserve is how a proforma hides a roof
   const [utilities, setUtilities] = useState(0); // annual $ (owner-paid utilities)
   // User-defined extra operating expenses (annual $). Used by rental strategies.
   const [otherExpenses, setOtherExpenses] = useState([]); // [{id, label, amount}]
@@ -706,11 +721,29 @@ export default function App() {
 
   // Flip-specific
   const [holdingMonths, setHoldingMonths] = useState(6);
-  // Hard money (advanced, Fix & Flip). Off by default so basic mode is unchanged.
-  const [hardMoney, setHardMoney] = useState(false);
-  const [hmLtcPct, setHmLtcPct] = useState(85);   // loan as % of purchase + rehab
+  // Hard money IS the Fix & Flip financing model -- points plus an interest-only
+  // carry, which is how flips are actually funded. The conventional Financing
+  // block is hidden on that tab so the two cannot contradict each other.
+  const [hmLtcPct, setHmLtcPct] = useState(85);   // max loan as % of purchase + rehab
+  const [hmArvPct, setHmArvPct] = useState(70);   // max loan as % of ARV
   const [hmRate, setHmRate] = useState(11);       // annual, interest-only
   const [hmPointsPct, setHmPointsPct] = useState(2);
+  // 'drawn'  — interest on the purchase tranche all period, rehab only as drawn
+  // 'full'   — interest on the whole commitment from day one ("full boat")
+  const [hmInterestBasis, setHmInterestBasis] = useState('drawn');
+  const [hmExitFeePct, setHmExitFeePct] = useState(0);
+  // 'monthly' — interest served during the hold, so it is cash out of pocket
+  // 'accrued' — rolled up and paid from sale proceeds; same total cost, less cash tied up
+  const [hmInterestPaid, setHmInterestPaid] = useState('monthly');
+  const [flipFinType, setFlipFinType] = useState('hard');
+  const applyFlipFinancing = (key) => {
+    setFlipFinType(key);
+    const preset = FLIP_FINANCING[key];
+    if (!preset) return;
+    setHmLtcPct(preset.ltc); setHmArvPct(preset.arv); setHmRate(preset.rate);
+    setHmPointsPct(preset.points); setHmExitFeePct(preset.exitFee);
+    setHmInterestBasis(preset.basis); setHmInterestPaid(preset.paid);
+  };
   const [sellingCostsPct, setSellingCostsPct] = useState(7);
 
   // Remodel planner (Fix & Flip)
@@ -957,16 +990,44 @@ export default function App() {
     // the points are usually the LARGER half of the financing cost -- they are
     // charged in full whether you sell in month three or month nine. Modeling a
     // flip as a conventional loan understates what the money actually costs.
-    const useHardMoney = advanced && hardMoney;
+    const useHardMoney = !cashPurchase;
     const hmProjectCost = purchasePrice + rehab;
-    const hmLoan = useHardMoney ? hmProjectCost * (hmLtcPct / 100) : 0;
+    // Lenders underwrite to the LESSER of a cost percentage and an ARV
+    // percentage. Sizing off cost alone can produce a loan nobody would write --
+    // on an overpriced deal the cost test is generous exactly when the ARV test
+    // should be binding.
+    const hmLoanByCost = hmProjectCost * (hmLtcPct / 100);
+    // 0% ARV cap means no ARV test at all -- private lenders often do not apply one.
+    const hmLoanByArv = hmArvPct > 0 ? arv * (hmArvPct / 100) : Infinity;
+    const hmLoan = useHardMoney ? Math.max(0, Math.min(hmLoanByCost, hmLoanByArv)) : 0;
+    const hmLoanBinding = hmLoanByArv < hmLoanByCost ? 'ARV' : 'cost';
     const hmPointsCost = useHardMoney ? hmLoan * (hmPointsPct / 100) : 0;
-    const hmInterest = useHardMoney ? hmLoan * (hmRate / 100) * (holdingMonths / 12) : 0;
+    // Interest basis. Lenders fund rehab in DRAWS, so you carry the purchase
+    // tranche for the whole hold but rehab dollars only as they are spent --
+    // modeled as half the rehab tranche outstanding on average. Some lenders
+    // charge on the full commitment from day one; that is the 'full' option.
+    // Assuming full-boat when the deal is actually draw-funded overstates carry,
+    // and the error grows with the rehab budget.
+    const hmYears = holdingMonths / 12;
+    const hmRehabShare = hmProjectCost > 0 ? rehab / hmProjectCost : 0;
+    const hmRehabTranche = hmLoan * hmRehabShare;
+    const hmPurchaseTranche = hmLoan - hmRehabTranche;
+    const hmInterest = !useHardMoney ? 0
+      : hmInterestBasis === 'full'
+        ? hmLoan * (hmRate / 100) * hmYears
+        : (hmPurchaseTranche + hmRehabTranche * 0.5) * (hmRate / 100) * hmYears;
+    // Exit fee — bridge debt usually has one, hard money usually does not. Paid
+    // out of sale proceeds, so it reduces profit without raising upfront cash.
+    const hmExitFee = useHardMoney ? hmLoan * (hmExitFeePct / 100) : 0;
 
     const fixedCarry = (propertyTax / 12 + insurance / 12 + utilities / 12) * holdingMonths;
-    const holdingCosts = useHardMoney
-      ? fixedCarry + hmInterest
-      : fixedCarry + monthlyPI * holdingMonths;
+    // Total carry, which is a cost either way. What differs is how much of it you
+    // actually fund during the hold: accrued interest is paid at closing out of
+    // proceeds, so it never leaves your pocket and should not depress ROI as if
+    // it had. Same total profit, less cash tied up — which is exactly why some
+    // investors take a higher accrued rate over a lower served one.
+    const holdingCosts = fixedCarry + hmInterest;
+    const carryOutOfPocket = fixedCarry + (hmInterestPaid === 'accrued' ? 0 : hmInterest);
 
     // Cash actually required: the slice of cost the lender does not fund, plus
     // closing and the points, which are paid up front out of pocket.
@@ -977,9 +1038,9 @@ export default function App() {
     // All-in is your basis BEFORE selling — purchase, rehab, closing, carry,
     // points. Selling costs stay out so this can be read against the 75%-of-ARV
     // rule of thumb the way flippers actually quote it.
-    const flipAllIn = purchasePrice + rehab + closingCosts + holdingCosts + hmPointsCost;
+    const flipAllIn = purchasePrice + rehab + closingCosts + holdingCosts + hmPointsCost + hmExitFee;
     const flipProfit = arv - flipAllIn - sellingCosts;
-    const flipCashTotal = flipCashIn + holdingCosts;
+    const flipCashTotal = flipCashIn + carryOutOfPocket;
     const flipRoi = flipCashTotal > 0 ? (flipProfit / flipCashTotal) * 100 : 0;
     // Simple annualization, not compounded: ROI can be negative, and compounding
     // a loss to a fractional power is meaningless. It also keeps the figure
@@ -1001,7 +1062,8 @@ export default function App() {
       annualCashFlow, monthlyCashFlow, totalCashIn,
       capRate, cashOnCash, dscr, grm, totalRoi,
       mao, flipProfit, flipRoi, holdingCosts, sellingCosts,
-      useHardMoney, hmLoan, hmPointsCost, hmInterest,
+      useHardMoney, hmLoan, hmPointsCost, hmInterest, hmLoanBinding, hmLoanByCost, hmLoanByArv,
+      hmExitFee, carryOutOfPocket,
       flipCashIn, flipAllIn, flipAnnualizedRoi, flipProfitPctArv, flipAllInPctArv,
       refiLoanAmount, cashOut, cashLeftIn, refiPI, refiCashFlow, brrrCoC,
       mgmt, maint, capex,
@@ -1017,7 +1079,8 @@ export default function App() {
   }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncomeTotal,
       vacancyPct, propertyTax, insurance, mgmtPct, mgmtRentOnly, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
       deprRate, buildingPct, taxRate, discountRate, noiGrowth, exitCapPct,
-      holdingMonths, sellingCostsPct, hardMoney, hmLtcPct, hmRate, hmPointsPct,
+      holdingMonths, sellingCostsPct, hmLtcPct, hmArvPct, hmRate, hmPointsPct, hmInterestBasis,
+      hmExitFeePct, hmInterestPaid,
       stressRent, stressVacancy, stressRate]);
 
   // ============ EXISTING-PROPERTY CALC (hold vs sell + 1031) ============
@@ -1310,11 +1373,17 @@ export default function App() {
             ['Annualized ROI', pct(calc.flipAnnualizedRoi)],
           ] : []),
           ...(calc.useHardMoney ? [
-            ['Hard Money Loan', `${m(calc.hmLoan)} @ ${hmLtcPct}% LTC`],
-            ['Points', `${m(calc.hmPointsCost)} (${hmPointsPct}%)`],
-            ['Interest Carry', `${m(calc.hmInterest)} @ ${hmRate}%`],
+            ['Financing Type', FLIP_FINANCING[flipFinType]?.label || 'Hard money'],
+            ['Loan', `${m(calc.hmLoan)}${hmArvPct > 0 ? ` (${calc.hmLoanBinding} test binding)` : ''}`],
+            ['Loan Limits', hmArvPct > 0
+              ? `${hmLtcPct}% of cost = ${m(calc.hmLoanByCost)} · ${hmArvPct}% of ARV = ${m(calc.hmLoanByArv)}`
+              : `${hmLtcPct}% of cost = ${m(calc.hmLoanByCost)} · no ARV test`],
+            ...(hmPointsPct > 0 ? [['Points', `${m(calc.hmPointsCost)} (${hmPointsPct}%)`]] : []),
+            ['Interest Carry', `${m(calc.hmInterest)} @ ${hmRate}% on ${hmInterestBasis === 'full' ? 'full loan' : 'drawn balance'}, ${hmInterestPaid === 'accrued' ? 'accrued to payoff' : 'paid monthly'}`],
+            ...(hmExitFeePct > 0 ? [['Exit Fee', `${m(calc.hmExitFee)} (${hmExitFeePct}%)`]] : []),
             ['Cash Required', m(calc.flipCashIn)],
-          ] : []) ] },
+            ['Cash Out of Pocket (incl. carry)', m(calc.flipCashIn + calc.carryOutOfPocket)],
+          ] : [['Financing', 'All cash — no loan'], ['Cash Required', m(calc.flipCashIn)]]) ] },
         { title: 'Remodel Plan', rows: [
           ['Timeline (critical path)', `${remodel.criticalWeeks.toFixed(1)} wks`],
           ['Cost Range', `${m(remodel.lowCost)} – ${m(remodel.highCost)}`],
@@ -1685,7 +1754,10 @@ export default function App() {
               </div>
             </section>
 
-            <section className="bg-slate-900/40 border border-slate-800 rounded-2xl p-5">
+            {/* Fix & Flip carries its own hard-money financing inside Flip Details.
+                Showing this block there too would put two contradictory financing
+                models on one screen. */}
+            <section className={`bg-slate-900/40 border border-slate-800 rounded-2xl p-5 ${strategy === 'flip' ? 'hidden' : ''}`}>
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-slate-300">
                   <DollarSign className="w-4 h-4 text-orange-500" /> Financing
@@ -1966,26 +2038,83 @@ export default function App() {
                     tip="Annual total the owner pays while holding the property. Divided by 12 to build the monthly holding cost." />
                 </div>
 
-                {advanced && (
-                  <div className="mt-4 pt-4 border-t border-slate-800">
-                    <label className="flex items-center gap-2 cursor-pointer mb-3 w-fit">
-                      <input type="checkbox" checked={hardMoney} onChange={(e) => setHardMoney(e.target.checked)}
-                        className="accent-orange-500 w-3.5 h-3.5" />
-                      <span className="text-xs font-semibold text-slate-300">Finance with hard money</span>
-                      <Tip text="Most flips are funded with points plus an interest-only carry, not an amortizing mortgage. On a short hold the points are usually the larger half of the financing cost — they are charged in full whether you sell in month three or month nine." />
+                <div className="mt-4 pt-4 border-t border-slate-800">
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-400">
+                      <DollarSign className="w-3.5 h-3.5 text-orange-500" /> Financing — {FLIP_FINANCING[flipFinType]?.label || 'Hard Money'}
+                      <Tip text="Flips are funded with short-term debt — points plus an interest-only carry — not an amortizing mortgage. On a short hold the points are often the larger half of the cost, charged in full whether you sell in month three or month nine." />
+                    </h3>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-1.5">
+                      <input type="checkbox" checked={cashPurchase} onChange={(e) => setCashPurchase(e.target.checked)}
+                        className="w-4 h-4 accent-orange-500" />
+                      Paying all cash (no loan)
                     </label>
-                    {hardMoney && (
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        <NumInput label="Loan-to-Cost" value={hmLtcPct} onChange={setHmLtcPct} suffix="%" step={5}
-                          tip="Share of purchase + rehab the lender funds. Hard money typically covers 80–90% of total cost; the rest is your cash." />
-                        <NumInput label="Interest Rate" value={hmRate} onChange={setHmRate} suffix="%" step={0.25}
-                          tip="Annual rate, charged interest-only on the full loan across the holding period. Hard money commonly runs 10–13%." />
-                        <NumInput label="Points" value={hmPointsPct} onChange={setHmPointsPct} suffix="%" step={0.5}
-                          tip="Origination fee as a percentage of the loan, paid up front. 2–3 points is typical. Unlike interest, this does not shrink if the flip goes quickly." />
+                  </div>
+                  {cashPurchase ? (
+                    <div className="text-xs text-slate-400 bg-slate-950/40 border border-slate-800 rounded-lg p-3">
+                      No loan — you fund purchase, rehab and closing yourself. Holding costs are taxes, insurance and utilities only.
+                    </div>
+                  ) : (<>
+                    {advanced && (
+                      <div className="flex flex-wrap items-center gap-2 mb-3 text-[11px]">
+                        <span className="text-slate-500">Financing type</span>
+                        {Object.entries(FLIP_FINANCING).map(([k, v]) => (
+                          <button key={k} onClick={() => applyFlipFinancing(k)}
+                            className={`px-2.5 py-1 rounded-md border transition-colors ${flipFinType === k
+                              ? 'bg-orange-500/15 border-orange-500/60 text-orange-300'
+                              : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                            {v.label}
+                          </button>
+                        ))}
+                        <Tip text="Starting points, not fixed products — every field below stays editable, so a deal matching none of them is still modelable. Private money typically skips points and the ARV test and often accrues interest to payoff; bridge debt is cheaper than hard money but usually carries an exit fee." />
                       </div>
                     )}
-                  </div>
-                )}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <NumInput label="Max Loan-to-Cost" value={hmLtcPct} onChange={setHmLtcPct} suffix="%" step={5}
+                        tip="Ceiling on the loan as a share of purchase + rehab. Hard money typically covers 80–90% of total cost." />
+                      <NumInput label="Max Loan-to-ARV" value={hmArvPct} onChange={setHmArvPct} suffix="%" step={5}
+                        tip="Ceiling on the loan as a share of after-repair value — usually 65–75%. The loan is the LESSER of this and the cost test, which is how lenders actually size it." />
+                      <NumInput label="Interest Rate" value={hmRate} onChange={setHmRate} suffix="%" step={0.25}
+                        tip="Annual rate, charged interest-only. Hard money commonly runs 10–13%." />
+                      <NumInput label="Points" value={hmPointsPct} onChange={setHmPointsPct} suffix="%" step={0.5}
+                        tip="Origination fee as a percentage of the loan, paid up front. 2–3 points is typical, and unlike interest it does not shrink if the flip goes quickly." />
+                      {advanced && (
+                        <NumInput label="Exit Fee" value={hmExitFeePct} onChange={setHmExitFeePct} suffix="%" step={0.25}
+                          tip="Fee charged at payoff as a percentage of the loan — common on bridge debt, rare on hard money. It comes out of sale proceeds, so it cuts profit without raising the cash you need up front." />
+                      )}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="text-slate-500">Interest charged on</span>
+                      {[['drawn', 'Drawn balance'], ['full', 'Full loan']].map(([v, lbl]) => (
+                        <button key={v} onClick={() => setHmInterestBasis(v)}
+                          className={`px-2.5 py-1 rounded-md border transition-colors ${hmInterestBasis === v
+                            ? 'bg-orange-500/15 border-orange-500/60 text-orange-300'
+                            : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                          {lbl}
+                        </button>
+                      ))}
+                      <Tip text="Most lenders fund rehab in draws, so you carry the purchase amount for the whole hold but rehab dollars only as you spend them. Some charge on the full commitment from day one. Picking the wrong one skews your carry, and the gap widens as the rehab budget grows." />
+                      {advanced && (<>
+                        <span className="text-slate-500 ml-2">and paid</span>
+                        {[['monthly', 'Monthly'], ['accrued', 'Accrued to payoff']].map(([v, lbl]) => (
+                          <button key={v} onClick={() => setHmInterestPaid(v)}
+                            className={`px-2.5 py-1 rounded-md border transition-colors ${hmInterestPaid === v
+                              ? 'bg-orange-500/15 border-orange-500/60 text-orange-300'
+                              : 'bg-slate-950/50 border-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                            {lbl}
+                          </button>
+                        ))}
+                        <Tip text="Private lenders often let interest roll up and get paid from the sale instead of being served monthly. Total cost is identical, but none of it leaves your pocket during the hold — so the same deal ties up less cash and returns a higher ROI. That trade is often worth a higher rate." />
+                      </>)}
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
+                      Loan sized at {fmt(calc.hmLoan, { money: true })} — {hmArvPct > 0
+                        ? <>the {calc.hmLoanBinding} test is binding ({fmt(calc.hmLoanByCost, { money: true })} at {hmLtcPct}% of cost vs {fmt(calc.hmLoanByArv, { money: true })} at {hmArvPct}% of ARV)</>
+                        : <>{hmLtcPct}% of cost, with no ARV test applied</>}.
+                      {hmInterestPaid === 'accrued' && <> Interest accrues to payoff, so {fmt(calc.hmInterest, { money: true })} of carry stays out of your cash requirement.</>}
+                    </p>
+                  </>)}
+                </div>
               </section>
             )}
 
@@ -2269,7 +2398,7 @@ export default function App() {
                     {calc.useHardMoney && (
                       <Stat label="Financing Cost" value={fmt(calc.hmPointsCost + calc.hmInterest, { money: true })}
                         sub={`${fmt(calc.hmPointsCost, { money: true })} pts + ${fmt(calc.hmInterest, { money: true })} int`}
-                        tip="Points plus interest-only carry over the holding period, on a loan of roughly the purchase-plus-rehab cost. The points half does not shrink when the flip goes well." />
+                        tip="Points plus interest-only carry over the holding period. The points half does not shrink when the flip goes well — it is charged in full on day one." />
                     )}
                     {calc.useHardMoney && (
                       <Stat label="Cash Required" value={fmt(calc.flipCashIn, { money: true })}
