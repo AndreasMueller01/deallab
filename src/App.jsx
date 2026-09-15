@@ -1,9 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Flame, Home, Wrench, TrendingUp, AlertTriangle, CheckCircle2, Info, RefreshCw, DollarSign, Calculator, BarChart3, Sliders, Lock, User, Mail, Phone, ShieldCheck, Clock, ListChecks, ChevronDown, ChevronRight, Printer, ArrowRightLeft, Scale, Building2, FileSpreadsheet } from 'lucide-react';
+import { Flame, Home, Wrench, TrendingUp, AlertTriangle, CheckCircle2, Info, RefreshCw, DollarSign, Calculator, BarChart3, Sliders, Lock, User, Mail, Phone, ShieldCheck, Clock, ListChecks, ChevronDown, ChevronRight, Printer, ArrowRightLeft, Scale, Building2, FileSpreadsheet, Maximize2, Minimize2 } from 'lucide-react';
 import { openPrintReport, downloadCSV } from './report';
 
 const JOTFORM_ID = '261466092010044';
 const STORAGE_KEY = 'deallab_access_granted_v1';
+
+// The public home of this app is an iframe on nashvilleinvestoragent.com/deal-analyzer.
+// Two behaviours exist only in that context: we report our content height to the
+// parent so the frame grows to fit (no scrollbar inside a scrollbar), and we offer
+// a "Full window" toggle that asks the parent to pin the frame to the viewport.
+// Loaded directly at the Vercel URL, IS_EMBEDDED is false and none of this runs.
+const IS_EMBEDDED = (() => {
+  try { return window.self !== window.top; } catch { return true; }
+})();
+
+const postToParent = (msg) => {
+  if (!IS_EMBEDDED) return;
+  try { window.parent.postMessage({ source: 'deallab', ...msg }, '*'); }
+  catch { /* parent unreachable; nothing to do */ }
+};
 
 // Deal Heat Index labels per strategy (cold → on-fire). The endpoints change
 // to fit each strategy's decision: flip = build vs. walk, existing = hold vs. sell.
@@ -350,7 +365,7 @@ const LeadGate = ({ onSuccess }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto bg-slate-950/90 backdrop-blur-md">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-orange-500/10 blur-3xl" />
         <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-red-600/10 blur-3xl" />
@@ -467,6 +482,66 @@ export default function App() {
   // Access gate
   const [accessGranted, setAccessGranted] = useState(false);
   const [gateChecked, setGateChecked] = useState(false);
+
+  // Full-window mode. Collapsed, the frame is as tall as the content and the
+  // page scrolls; expanded, the parent pins the frame to the viewport and the
+  // app scrolls internally again -- which is what makes the sticky header work.
+  const [expanded, setExpanded] = useState(false);
+
+  const toggleExpand = () => {
+    const next = !expanded;
+    setExpanded(next);
+    postToParent({ type: next ? 'expand' : 'collapse' });
+  };
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') { setExpanded(false); postToParent({ type: 'collapse' }); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
+
+  // The host page can also drop out of full-window mode (its own Esc handler).
+  // Listen so our button label never disagrees with what the visitor sees.
+  useEffect(() => {
+    if (!IS_EMBEDDED) return;
+    const onMsg = (e) => {
+      const d = e.data;
+      if (!d || d.source !== 'deallab-host') return;
+      if (d.type === 'collapsed') setExpanded(false);
+      if (d.type === 'expanded') setExpanded(true);
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // Tell the parent how tall we are so it can size the frame to the content.
+  useEffect(() => {
+    if (!IS_EMBEDDED || expanded) return;   // the parent owns the height while expanded
+    if (!gateChecked) return;
+
+    // The lead gate is a `fixed inset-0` overlay. Inside an auto-height frame
+    // `fixed` resolves against the frame's full height, so a 1,700px frame would
+    // park the modal 850px down where nobody sees it. Pin a compact height until
+    // access is granted, then switch to measuring real content.
+    if (!accessGranted) { postToParent({ type: 'height', height: 760 }); return; }
+
+    const el = document.getElementById('root');
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let last = 0;
+    const measure = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      if (Math.abs(h - last) < 2) return;   // ignore sub-pixel churn
+      last = h;
+      postToParent({ type: 'height', height: h });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [gateChecked, accessGranted, expanded]);
 
   useEffect(() => {
     let granted = false;
@@ -1272,7 +1347,7 @@ export default function App() {
   const stressCalc = strategy === 'existing' ? existingCalc : calc;
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-slate-950 text-slate-100" style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system' }}>
+    <div className={`${IS_EMBEDDED && !expanded ? '' : 'min-h-screen'} overflow-x-clip bg-slate-950 text-slate-100`} style={{ fontFamily: 'ui-sans-serif, system-ui, -apple-system' }}>
       {gateChecked && !accessGranted && (
         <LeadGate onSuccess={() => setAccessGranted(true)} />
       )}
@@ -1314,6 +1389,18 @@ export default function App() {
                   </span>
                 )}
               </div>
+            )}
+            {IS_EMBEDDED && (
+              <button
+                onClick={toggleExpand}
+                title={expanded ? 'Exit full window (Esc)' : 'Open the analyzer in a full window'}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 hover:text-white hover:border-orange-500/60 transition-colors"
+              >
+                {expanded
+                  ? <Minimize2 className="w-3.5 h-3.5" />
+                  : <Maximize2 className="w-3.5 h-3.5" />}
+                <span className="font-semibold">{expanded ? 'Exit full window' : 'Full window'}</span>
+              </button>
             )}
           </div>
         </div>
