@@ -638,6 +638,9 @@ export default function App() {
   // Projection / discounting
   const [discountRate, setDiscountRate] = useState(8); // for NPV
   const [noiGrowth, setNoiGrowth] = useState(2); // stabilized NOI growth %/yr
+  // Exit cap rate, advanced-only. 0 = off, in which case the Year-5 value falls
+  // back to the appreciation assumption. See the note in `calc`.
+  const [exitCapPct, setExitCapPct] = useState(0);
 
   // Income — single or multifamily
   const [propertyType, setPropertyType] = useState('single');
@@ -703,6 +706,11 @@ export default function App() {
 
   // Flip-specific
   const [holdingMonths, setHoldingMonths] = useState(6);
+  // Hard money (advanced, Fix & Flip). Off by default so basic mode is unchanged.
+  const [hardMoney, setHardMoney] = useState(false);
+  const [hmLtcPct, setHmLtcPct] = useState(85);   // loan as % of purchase + rehab
+  const [hmRate, setHmRate] = useState(11);       // annual, interest-only
+  const [hmPointsPct, setHmPointsPct] = useState(2);
   const [sellingCostsPct, setSellingCostsPct] = useState(7);
 
   // Remodel planner (Fix & Flip)
@@ -806,12 +814,30 @@ export default function App() {
     const capRate = (noi / purchasePrice) * 100;
     const cashOnCash = totalCashIn > 0 ? (annualCashFlow / totalCashIn) * 100 : 0;
     const dscr = annualDebtService > 0 ? noi / annualDebtService : null;
-    const grm = grossAnnualRent > 0 ? purchasePrice / grossAnnualRent : 0;
+    // GRM is conventionally price / gross SCHEDULED RENT, so other income stays
+    // out of the denominator. Including it would flatter the multiple and make
+    // this property look cheaper than a comp quoted the ordinary way.
+    const grm = annualRent > 0 ? purchasePrice / annualRent : 0;
 
     // --- Appreciation projections (compounded annually) ---
     const apprRate = apprPct / 100;
     const projValue1 = purchasePrice * Math.pow(1 + apprRate, 1);
-    const projValue5 = purchasePrice * Math.pow(1 + apprRate, 5);
+    const apprValue5 = purchasePrice * Math.pow(1 + apprRate, 5);
+
+    // Exit cap rate (advanced, optional). Left at 0 the Year-5 value is just the
+    // appreciation assumption compounded -- which quietly assumes you sell into
+    // the same market you bought in, the most common way a rental proforma
+    // flatters itself. Set an exit cap and the Year-5 value instead comes from
+    // the income a buyer is actually purchasing: forward (Year-6) NOI capped at
+    // that rate, which is how the sale would really be priced. Setting the exit
+    // cap ABOVE the entry cap is what tests the deal against cap-rate expansion.
+    //
+    // When set it becomes THE Year-5 value, not a second one shown alongside the
+    // appreciated figure -- equity, the 5-yr return and the IRR sale proceeds all
+    // follow from the same number, so the report can never contradict itself.
+    const useExitCap = advanced && exitCapPct > 0;
+    const exitNOI = noi * Math.pow(1 + noiGrowth / 100, 5);
+    const projValue5 = useExitCap ? exitNOI / (exitCapPct / 100) : apprValue5;
 
     // Proper principal paydown via month-by-month amortization (IO-aware).
     const mRate = effRate / 12 / 100;
@@ -841,6 +867,16 @@ export default function App() {
     const annualDepreciation = purchasePrice * (buildingPct / 100) * (deprRate / 100);
     const deprTaxShield = annualDepreciation * (taxRate / 100);
 
+    // After-tax cash-on-cash, deliberately using the SAME convention as the
+    // Analyze Existing tab (`afterTaxCashFlow` there) rather than a second,
+    // better one -- two different tax treatments in one app is worse than one
+    // simplified treatment applied consistently. The simplification: it credits
+    // the depreciation shield but does not tax the cash flow itself, so this is
+    // an upper bound, not a filing-ready number. Worth upgrading in both places
+    // together, never in just one.
+    const afterTaxCashFlow = annualCashFlow + deprTaxShield;
+    const afterTaxCoC = totalCashIn > 0 ? (afterTaxCashFlow / totalCashIn) * 100 : 0;
+
     const totalRoi = totalCashIn > 0 ? ((annualCashFlow + yr1Principal + yr1Appreciation) / totalCashIn) * 100 : 0;
 
     // Equity projections (value − loan balance)
@@ -849,6 +885,34 @@ export default function App() {
     const equity5 = projValue5 - balAfter5;
 
     // --- Additional metrics ---
+    // Operating expense ratio: OpEx / effective gross income, debt deliberately
+    // excluded. It measures how the property is RUN, not how it is financed.
+    const oer = effectiveGrossIncome > 0 ? (operatingExpenses / effectiveGrossIncome) * 100 : null;
+
+    // Breakeven occupancy: how much of the scheduled rent has to actually be
+    // collected before the property covers everything, debt included.
+    //
+    // Deliberately NOT the textbook (OpEx + debt service) / gross rent. That
+    // formula treats every expense as fixed, which is wrong here: the management
+    // fee is a percentage of income and so falls as occupancy falls, while
+    // maintenance and capex are struck off POTENTIAL rent and are fixed in
+    // dollars, as is other income, which is collected whether or not a unit is
+    // occupied. Solving for occupancy with the fee left variable gives a lower
+    // and truer number. Values above 100% are real and worth showing -- they mean
+    // the deal loses money even at full occupancy.
+    const mgmtFrac = mgmtPct / 100;
+    const fixedOpex = operatingExpenses - mgmt;   // everything that does not move with income
+    let breakevenOccupancy = null;
+    if (annualRent > 0 && mgmtFrac < 1) {
+      const required = fixedOpex + annualDebtService;
+      const rentNeeded = (advanced && mgmtRentOnly)
+        // fee charged on collected rent:  rent*o*(1-m) + OI - fixed - DS = 0
+        ? (required - annualOtherIncome) / (1 - mgmtFrac)
+        // fee charged on EGI:            (rent*o + OI)*(1-m) - fixed - DS = 0
+        : required / (1 - mgmtFrac) - annualOtherIncome;
+      breakevenOccupancy = Math.max(0, (rentNeeded / annualRent) * 100);
+    }
+
     const debtYield = loanAmount > 0 ? (noi / loanAmount) * 100 : null;
     // Forward (Yr-2) cap rate on cost basis: NOI grown at the stabilized rate over original price.
     const capRateYr2 = purchasePrice > 0 ? (noi * Math.pow(1 + noiGrowth / 100, 2) / purchasePrice) * 100 : 0;
@@ -887,9 +951,42 @@ export default function App() {
 
     const mao = arv * 0.7 - rehab;
     const sellingCosts = arv * (sellingCostsPct / 100);
-    const holdingCosts = (propertyTax / 12 + insurance / 12 + utilities / 12 + monthlyPI) * holdingMonths;
-    const flipProfit = arv - purchasePrice - rehab - closingCosts - sellingCosts - holdingCosts;
-    const flipRoi = totalCashIn > 0 ? (flipProfit / (totalCashIn + holdingCosts)) * 100 : 0;
+
+    // Hard money. Flips are overwhelmingly funded with points plus an
+    // interest-only carry, not an amortizing mortgage, and on a 4-8 month hold
+    // the points are usually the LARGER half of the financing cost -- they are
+    // charged in full whether you sell in month three or month nine. Modeling a
+    // flip as a conventional loan understates what the money actually costs.
+    const useHardMoney = advanced && hardMoney;
+    const hmProjectCost = purchasePrice + rehab;
+    const hmLoan = useHardMoney ? hmProjectCost * (hmLtcPct / 100) : 0;
+    const hmPointsCost = useHardMoney ? hmLoan * (hmPointsPct / 100) : 0;
+    const hmInterest = useHardMoney ? hmLoan * (hmRate / 100) * (holdingMonths / 12) : 0;
+
+    const fixedCarry = (propertyTax / 12 + insurance / 12 + utilities / 12) * holdingMonths;
+    const holdingCosts = useHardMoney
+      ? fixedCarry + hmInterest
+      : fixedCarry + monthlyPI * holdingMonths;
+
+    // Cash actually required: the slice of cost the lender does not fund, plus
+    // closing and the points, which are paid up front out of pocket.
+    const flipCashIn = useHardMoney
+      ? (hmProjectCost - hmLoan) + closingCosts + hmPointsCost
+      : totalCashIn;
+
+    // All-in is your basis BEFORE selling — purchase, rehab, closing, carry,
+    // points. Selling costs stay out so this can be read against the 75%-of-ARV
+    // rule of thumb the way flippers actually quote it.
+    const flipAllIn = purchasePrice + rehab + closingCosts + holdingCosts + hmPointsCost;
+    const flipProfit = arv - flipAllIn - sellingCosts;
+    const flipCashTotal = flipCashIn + holdingCosts;
+    const flipRoi = flipCashTotal > 0 ? (flipProfit / flipCashTotal) * 100 : 0;
+    // Simple annualization, not compounded: ROI can be negative, and compounding
+    // a loss to a fractional power is meaningless. It also keeps the figure
+    // comparable to how flippers quote it.
+    const flipAnnualizedRoi = holdingMonths > 0 ? flipRoi * (12 / holdingMonths) : 0;
+    const flipProfitPctArv = arv > 0 ? (flipProfit / arv) * 100 : 0;
+    const flipAllInPctArv = arv > 0 ? (flipAllIn / arv) * 100 : 0;
 
     const refiLoanAmount = arv * 0.75;
     const cashOut = refiLoanAmount - loanAmount;
@@ -904,19 +1001,24 @@ export default function App() {
       annualCashFlow, monthlyCashFlow, totalCashIn,
       capRate, cashOnCash, dscr, grm, totalRoi,
       mao, flipProfit, flipRoi, holdingCosts, sellingCosts,
+      useHardMoney, hmLoan, hmPointsCost, hmInterest,
+      flipCashIn, flipAllIn, flipAnnualizedRoi, flipProfitPctArv, flipAllInPctArv,
       refiLoanAmount, cashOut, cashLeftIn, refiPI, refiCashFlow, brrrCoC,
       mgmt, maint, capex,
       projValue1, projValue5, balAfter1, balAfter5, yr1Principal, yr1Appreciation,
       equityNow, equity1, equity5,
       ioMonths, ioPayment, amortPayment,
       hasBalloon, balloonBalance, effAmortYears,
-      annualDepreciation, deprTaxShield, debtYield, capRateYr2,
+      annualDepreciation, deprTaxShield, debtYield, capRateYr2, oer, breakevenOccupancy,
+      afterTaxCashFlow, afterTaxCoC,
       initialEquityReturn, totalEquityReturn5, projIRR, projNPV, saleNet5, cashFlows,
+      useExitCap, exitNOI, apprValue5,
     };
   }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncomeTotal,
       vacancyPct, propertyTax, insurance, mgmtPct, mgmtRentOnly, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
-      deprRate, buildingPct, taxRate, discountRate, noiGrowth,
-      holdingMonths, sellingCostsPct, stressRent, stressVacancy, stressRate]);
+      deprRate, buildingPct, taxRate, discountRate, noiGrowth, exitCapPct,
+      holdingMonths, sellingCostsPct, hardMoney, hmLtcPct, hmRate, hmPointsPct,
+      stressRent, stressVacancy, stressRate]);
 
   // ============ EXISTING-PROPERTY CALC (hold vs sell + 1031) ============
   const existingCalc = useMemo(() => {
@@ -982,7 +1084,14 @@ export default function App() {
 
     // 5-year IRR / NPV of CONTINUING TO HOLD: invest the current equity, collect
     // stabilized cash flow, sell in Year 5 at the appreciated value net of costs.
-    const value5 = currentValue * Math.pow(1 + apprPct / 100, 5);
+    // Same exit-cap treatment as `calc` above -- see the long note there. Without
+    // this the control would silently do nothing on the Existing tab, which is
+    // worse than not offering it.
+    const useExitCap = advanced && exitCapPct > 0;
+    const exitNOI = noi * Math.pow(1 + noiGrowth / 100, 5);
+    const value5 = useExitCap
+      ? exitNOI / (exitCapPct / 100)
+      : currentValue * Math.pow(1 + apprPct / 100, 5);
     const saleNet5 = value5 * (1 - sellingCostsPct / 100) - balAfter5;
     const annualDSForYear = (y) => {
       let ds = 0;
@@ -1029,7 +1138,7 @@ export default function App() {
   }, [monthlyRent, otherIncomeTotal, vacancyPct, mgmtPct, mgmtRentOnly, advanced, maintPct, capexPct, propertyTax, insurance, utilities, otherOpexTotal,
       currentValue, currentBalance, currentRate, yearsRemaining, ioYears, cashPurchase, apprPct, originalBasis, accumDepr,
       buildingPct, deprRate, taxRate, sellingCostsPct, capGainsRate, recaptureRate, stateTaxRate,
-      discountRate, replacementCost, noiGrowth, stressRent, stressVacancy, stressRate]);
+      discountRate, replacementCost, noiGrowth, exitCapPct, stressRent, stressVacancy, stressRate]);
 
   // ============ HEAT SCORE ============
   const heat = useMemo(() => {
@@ -1194,7 +1303,18 @@ export default function App() {
         { title: 'Flip Returns', rows: [
           ['Projected Profit', m(calc.flipProfit)], ['ROI', pct(calc.flipRoi)],
           ['MAO (70% rule)', m(calc.mao)], ['Holding Costs', m(calc.holdingCosts)],
-          ['Selling Costs', m(calc.sellingCosts)], ['Holding Period', `${holdingMonths} mo`] ] },
+          ['Selling Costs', m(calc.sellingCosts)], ['Holding Period', `${holdingMonths} mo`],
+          ...(advanced ? [
+            ['Profit % of ARV', pct(calc.flipProfitPctArv)],
+            ['All-In % of ARV', pct(calc.flipAllInPctArv)],
+            ['Annualized ROI', pct(calc.flipAnnualizedRoi)],
+          ] : []),
+          ...(calc.useHardMoney ? [
+            ['Hard Money Loan', `${m(calc.hmLoan)} @ ${hmLtcPct}% LTC`],
+            ['Points', `${m(calc.hmPointsCost)} (${hmPointsPct}%)`],
+            ['Interest Carry', `${m(calc.hmInterest)} @ ${hmRate}%`],
+            ['Cash Required', m(calc.flipCashIn)],
+          ] : []) ] },
         { title: 'Remodel Plan', rows: [
           ['Timeline (critical path)', `${remodel.criticalWeeks.toFixed(1)} wks`],
           ['Cost Range', `${m(remodel.lowCost)} – ${m(remodel.highCost)}`],
@@ -1285,10 +1405,19 @@ export default function App() {
         ['Cash-on-Cash', pct(calc.cashOnCash)], ['Cap Rate', pct(calc.capRate, 2)],
         ['DSCR', fmt(calc.dscr, { dec: 2 })], ['Debt Yield', pct(calc.debtYield)],
         ['Monthly Cash Flow', m(calc.monthlyCashFlow)], ['Total ROI Yr 1', pct(calc.totalRoi)],
-        ['ROE Yr 1', pct(calc.initialEquityReturn)], ['5-yr Total Return', pct(calc.totalEquityReturn5, 0)] ] },
+        ['ROE Yr 1', pct(calc.initialEquityReturn)], ['5-yr Total Return', pct(calc.totalEquityReturn5, 0)],
+        ...(advanced ? [
+          ['Breakeven Occupancy', calc.breakevenOccupancy === null ? '—' : pct(calc.breakevenOccupancy)],
+          ['Operating Expense Ratio', calc.oer === null ? '—' : pct(calc.oer)],
+          ['GRM', calc.grm ? fmt(calc.grm, { dec: 1 }) : '—'],
+          ['After-Tax CoC', pct(calc.afterTaxCoC)],
+        ] : []) ] },
       { title: 'Tax & Projection', rows: [
         ['Depreciation (yr)', m(calc.annualDepreciation)], ['Depr. Tax Shield', m(calc.deprTaxShield)],
         ['Value Yr 1 / Yr 5', `${m(calc.projValue1)} / ${m(calc.projValue5)}`],
+        ...(calc.useExitCap
+          ? [['Yr 5 Value Basis', `${exitCapPct}% exit cap on forward NOI of ${m(calc.exitNOI)}`]]
+          : []),
         ['Equity Yr 1 / Yr 5', `${m(calc.equity1)} / ${m(calc.equity5)}`],
         ['5-yr IRR', calc.projIRR === null ? '—' : pct(calc.projIRR * 100)],
         ...(advanced ? [['NPV @ ' + discountRate + '%', m(calc.projNPV)]] : []) ] },
@@ -1836,6 +1965,27 @@ export default function App() {
                   <NumInput label="Utilities (yr)" value={utilities} onChange={setUtilities} prefix="$"
                     tip="Annual total the owner pays while holding the property. Divided by 12 to build the monthly holding cost." />
                 </div>
+
+                {advanced && (
+                  <div className="mt-4 pt-4 border-t border-slate-800">
+                    <label className="flex items-center gap-2 cursor-pointer mb-3 w-fit">
+                      <input type="checkbox" checked={hardMoney} onChange={(e) => setHardMoney(e.target.checked)}
+                        className="accent-orange-500 w-3.5 h-3.5" />
+                      <span className="text-xs font-semibold text-slate-300">Finance with hard money</span>
+                      <Tip text="Most flips are funded with points plus an interest-only carry, not an amortizing mortgage. On a short hold the points are usually the larger half of the financing cost — they are charged in full whether you sell in month three or month nine." />
+                    </label>
+                    {hardMoney && (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <NumInput label="Loan-to-Cost" value={hmLtcPct} onChange={setHmLtcPct} suffix="%" step={5}
+                          tip="Share of purchase + rehab the lender funds. Hard money typically covers 80–90% of total cost; the rest is your cash." />
+                        <NumInput label="Interest Rate" value={hmRate} onChange={setHmRate} suffix="%" step={0.25}
+                          tip="Annual rate, charged interest-only on the full loan across the holding period. Hard money commonly runs 10–13%." />
+                        <NumInput label="Points" value={hmPointsPct} onChange={setHmPointsPct} suffix="%" step={0.5}
+                          tip="Origination fee as a percentage of the loan, paid up front. 2–3 points is typical. Unlike interest, this does not shrink if the flip goes quickly." />
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
             )}
 
@@ -1880,9 +2030,15 @@ export default function App() {
                       <BarChart3 className="w-3.5 h-3.5 text-orange-500" /> 5-Year IRR &amp; NPV
                       <Tip text="A stabilized-NOI projection: 5 years of cash flow (NOI growing at your assumed rate, minus debt service) plus a Year-5 sale at the appreciated value net of selling costs. IRR and NPV update live as you move the stress sliders above — that's your sensitivity analysis." />
                     </h3>
-                    <div className="w-28">
-                      <NumInput label="NPV Discount Rate" value={discountRate} onChange={setDiscountRate} suffix="%" step={0.5}
-                        tip="Your required rate of return, used to discount the projected cash flows for NPV. A positive NPV means the deal beats your hurdle rate." />
+                    <div className="flex items-start gap-2">
+                      <div className="w-28">
+                        <NumInput label="Exit Cap Rate" value={exitCapPct} onChange={setExitCapPct} suffix="%" step={0.25}
+                          tip="Leave at 0 and the Year-5 sale is valued off your appreciation assumption. Enter a cap rate and it is priced off forward NOI ÷ that rate instead — how a buyer would actually value it. Setting this ABOVE your entry cap is how you test the deal against cap-rate expansion, which is what usually kills a hold." />
+                      </div>
+                      <div className="w-28">
+                        <NumInput label="NPV Discount Rate" value={discountRate} onChange={setDiscountRate} suffix="%" step={0.5}
+                          tip="Your required rate of return, used to discount the projected cash flows for NPV. A positive NPV means the deal beats your hurdle rate." />
+                      </div>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2.5">
@@ -1895,8 +2051,12 @@ export default function App() {
                   </div>
                   <p className="text-[10px] text-slate-500 mt-2 leading-relaxed">
                     {strategy === 'existing'
-                      ? <>Based on continuing to hold for 5 years — invest today's equity, collect {noiGrowth}% growing NOI, and sell in Year 5 at {apprPct}% appreciation net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test it.</>
-                      : <>Based on a 5-year hold, {noiGrowth}% stabilized NOI growth, {apprPct}% appreciation, and a sale at Year&nbsp;5 net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test these returns.</>}
+                      ? <>Based on continuing to hold for 5 years — invest today&apos;s equity, collect {noiGrowth}% growing NOI, and {exitCapPct > 0
+                          ? <>sell in Year 5 at a {exitCapPct}% exit cap on forward NOI</>
+                          : <>sell in Year 5 at {apprPct}% appreciation</>}, net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test it.</>
+                      : <>Based on a 5-year hold, {noiGrowth}% stabilized NOI growth, and {exitCapPct > 0
+                          ? <>a Year&nbsp;5 sale priced at a {exitCapPct}% exit cap on forward NOI</>
+                          : <>a Year&nbsp;5 sale at {apprPct}% appreciation</>}, net of {sellingCostsPct}% selling costs. Move the sliders above to stress-test these returns.</>}
                   </p>
                 </div>
               )}
@@ -2069,6 +2229,19 @@ export default function App() {
                     <Stat label="Cap Rate (Yr 2)" value={fmt(calc.capRateYr2, { pct: true, dec: 2 })}
                       sub="yield on cost"
                       tip="Forward cap rate: NOI grown at your stabilized growth rate for 2 years, divided by your purchase price. Shows the income-yield trend on your original basis." />
+                    <Stat label="Breakeven Occupancy" value={calc.breakevenOccupancy === null ? '—' : fmt(calc.breakevenOccupancy, { pct: true, dec: 1 })}
+                      status={calc.breakevenOccupancy === null ? undefined : calc.breakevenOccupancy < 80 ? 'good' : calc.breakevenOccupancy < 90 ? 'neutral' : calc.breakevenOccupancy < 100 ? 'warn' : 'bad'}
+                      tip="How much of your scheduled rent has to actually be collected before the property covers operating costs AND debt. The gap between this and 100% is your cushion. Above 100% means the deal loses money even fully occupied." />
+                    <Stat label="Operating Expense Ratio" value={calc.oer === null ? '—' : fmt(calc.oer, { pct: true, dec: 1 })}
+                      status={calc.oer === null ? undefined : calc.oer <= 40 ? 'good' : calc.oer <= 50 ? 'neutral' : 'warn'}
+                      tip="Operating expenses ÷ effective gross income, before debt. Single-family typically runs 35–45%. Under 30% usually means something is missing from the expense list, not that you found a bargain." />
+                    <Stat label="GRM" value={calc.grm ? fmt(calc.grm, { dec: 1 }) : '—'}
+                      sub="price ÷ annual rent"
+                      tip="Gross Rent Multiplier. A fast way to compare properties that ignores expenses entirely — useful for screening, never for deciding. Lower is cheaper relative to rent." />
+                    <Stat label="After-Tax CoC" value={fmt(calc.afterTaxCoC, { pct: true, dec: 1 })}
+                      status={calc.afterTaxCoC >= 8 ? 'good' : calc.afterTaxCoC >= 6 ? 'neutral' : calc.afterTaxCoC >= 4 ? 'warn' : 'bad'}
+                      sub={`at ${taxRate}% tax rate`}
+                      tip="Cash-on-cash with the depreciation tax shield added back — the same treatment the Analyze Existing tab uses. It credits depreciation but does not tax the cash flow itself, so read it as an upper bound rather than a filing-ready figure." />
                   </>)}
                 </div>
               ) : (
@@ -2082,7 +2255,28 @@ export default function App() {
                   <Stat label="MAO (70% Rule)" value={fmt(calc.mao, { money: true })}
                     tip="Maximum Allowable Offer = (ARV × 70%) − Rehab. The classic rule of thumb for flips. Adjust to 75% in hot markets, 65% in slow ones." />
                   <Stat label="Holding Costs" value={fmt(calc.holdingCosts, { money: true })}
-                    tip="Carrying costs (mortgage, tax, insurance, utilities) during the rehab/sale period." />
+                    tip="Carrying costs (financing, tax, insurance, utilities) during the rehab/sale period." />
+                  {advanced && (<>
+                    <Stat label="Profit % of ARV" value={fmt(calc.flipProfitPctArv, { pct: true, dec: 1 })}
+                      status={calc.flipProfitPctArv >= 15 ? 'good' : calc.flipProfitPctArv >= 10 ? 'neutral' : 'warn'}
+                      tip="Profit as a share of after-repair value. A scale-free check that works on a $150k house and a $900k one: 15%+ is healthy, under 10% leaves no room for the comps to be wrong." />
+                    <Stat label="All-In % of ARV" value={fmt(calc.flipAllInPctArv, { pct: true, dec: 1 })}
+                      status={calc.flipAllInPctArv <= 75 ? 'good' : calc.flipAllInPctArv <= 85 ? 'warn' : 'bad'}
+                      tip="Everything in the deal before selling — purchase, rehab, closing, carry, points — as a share of ARV. The classic ceiling is 75%. Above 85%, a small ARV miss erases the profit." />
+                    <Stat label="Annualized ROI" value={fmt(calc.flipAnnualizedRoi, { pct: true, dec: 1 })}
+                      sub={`${holdingMonths} mo hold`}
+                      tip="ROI scaled to a yearly rate so a flip can be compared against a rental. Simple annualization — it assumes you could repeat this deal back-to-back, which is the assumption worth questioning." />
+                    {calc.useHardMoney && (
+                      <Stat label="Financing Cost" value={fmt(calc.hmPointsCost + calc.hmInterest, { money: true })}
+                        sub={`${fmt(calc.hmPointsCost, { money: true })} pts + ${fmt(calc.hmInterest, { money: true })} int`}
+                        tip="Points plus interest-only carry over the holding period, on a loan of roughly the purchase-plus-rehab cost. The points half does not shrink when the flip goes well." />
+                    )}
+                    {calc.useHardMoney && (
+                      <Stat label="Cash Required" value={fmt(calc.flipCashIn, { money: true })}
+                        sub="down + closing + points"
+                        tip="What you have to fund yourself: the share of purchase and rehab the lender does not cover, plus closing costs and the points. Holding costs come out of pocket on top of this." />
+                    )}
+                  </>)}
                 </div>
               )}
             </div>
