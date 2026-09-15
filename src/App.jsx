@@ -546,12 +546,17 @@ export default function App() {
   useEffect(() => {
     let granted = false;
 
-    // Durable first-party cookie set server-side by /api/lead — survives Safari's
-    // 7-day eviction of localStorage / JS-set cookies, so returning visitors on
-    // this device aren't re-prompted.
+    // Durable cookie set server-side by /api/lead — survives Safari's 7-day
+    // eviction of localStorage / JS-set cookies, so returning visitors on this
+    // device aren't re-prompted. Two names: `deallab_lead` (SameSite=Lax) when the
+    // app is first-party to the page embedding it, `deallab_lead_p` (partitioned)
+    // when it is not. See the header comment in api/lead.js. Either one counts.
     const hasLeadCookie = document.cookie
       .split(';')
-      .some((c) => c.trim().startsWith('deallab_lead='));
+      .some((c) => {
+        const t = c.trim();
+        return t.startsWith('deallab_lead=') || t.startsWith('deallab_lead_p=');
+      });
     if (hasLeadCookie) granted = true;
 
     // Fast local fallback (also covers dev where the Secure cookie may not stick).
