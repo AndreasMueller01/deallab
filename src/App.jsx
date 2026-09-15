@@ -698,7 +698,19 @@ export default function App() {
   };
 
   // Expenses
-  const [propertyTax, setPropertyTax] = useState(2400);
+  // Property tax. A flat dollar amount stays frozen when the purchase price
+  // changes, which quietly flatters expensive deals -- move the price from
+  // $320k to $500k and the tax bill does not follow. Default to a rate so it
+  // tracks the deal; 0.75% reproduces the old $2,400 default at $320k exactly.
+  // A dollar amount is still available for someone who knows the actual bill.
+  const [taxMode, setTaxMode] = useState('rate');   // 'rate' | 'amount'
+  const [taxRatePct, setTaxRatePct] = useState(0.75);
+  const [taxAmount, setTaxAmount] = useState(2400);
+  // Effective annual tax for a purchase-based strategy, and for the Existing tab,
+  // where the right basis is what the property is worth now, not what it cost.
+  const propertyTax = useMemo(
+    () => (taxMode === 'rate' ? purchasePrice * (taxRatePct / 100) : taxAmount),
+    [taxMode, taxRatePct, taxAmount, purchasePrice]);
   const [insurance, setInsurance] = useState(1800);
   const [mgmtPct, setMgmtPct] = useState(8);
   // Advanced only: bill property management on collected RENT only, instead of
@@ -721,6 +733,11 @@ export default function App() {
 
   // Flip-specific
   const [holdingMonths, setHoldingMonths] = useState(6);
+  // BRRRR timeline. A BRRRR is a flip you keep, and the model used to skip the
+  // expensive half -- see the note in `calc`.
+  const [brrrrHoldMonths, setBrrrrHoldMonths] = useState(6);    // close -> refi
+  const [brrrrRehabMonths, setBrrrrRehabMonths] = useState(4);  // vacant portion
+  const [refiLtvPct, setRefiLtvPct] = useState(75);
   // Hard money IS the Fix & Flip financing model -- points plus an interest-only
   // carry, which is how flips are actually funded. The conventional Financing
   // block is hidden on that tab so the two cannot contradict each other.
@@ -1049,9 +1066,27 @@ export default function App() {
     const flipProfitPctArv = arv > 0 ? (flipProfit / arv) * 100 : 0;
     const flipAllInPctArv = arv > 0 ? (flipAllIn / arv) * 100 : 0;
 
-    const refiLoanAmount = arv * 0.75;
+    // --- BRRRR ---
+    // A BRRRR is a flip you keep, and this used to refinance on day one against a
+    // stabilized NOI the property could not yet produce. In reality you hold it
+    // vacant through the rehab -- paying taxes, insurance, utilities and debt
+    // service with no rent coming in -- and lenders want seasoning before they
+    // will lend against the new value. That dead period is real money and it is
+    // what makes the "infinite return" BRRRR rarer than it looks.
+    const brrrrVacantMonths = Math.min(brrrrRehabMonths, brrrrHoldMonths);
+    const brrrrRentedMonths = Math.max(0, brrrrHoldMonths - brrrrVacantMonths);
+    const brrrrFixedMonthly = (propertyTax + insurance + utilities) / 12;
+    // While vacant there is no rent, and management, maintenance and capex do not
+    // apply to an empty construction site — only fixed carry and the debt.
+    const brrrrVacantCost = (brrrrFixedMonthly + monthlyPI) * brrrrVacantMonths;
+    // Rented but not yet refinanced: full NOI against the acquisition debt.
+    const brrrrRentedNet = (noi / 12 - monthlyPI) * brrrrRentedMonths;
+    const brrrrCarry = brrrrVacantCost - brrrrRentedNet;   // net cash consumed before the refi
+
+    const refiLoanAmount = arv * (refiLtvPct / 100);
     const cashOut = refiLoanAmount - loanAmount;
-    const cashLeftIn = totalCashIn - cashOut;
+    const brrrrCashIn = totalCashIn + brrrrCarry;   // everything funded before the refi
+    const cashLeftIn = brrrrCashIn - cashOut;
     const refiPI = pmt(effRate, effAmortYears * 12, refiLoanAmount);
     const refiCashFlow = (noi - refiPI * 12);
     const brrrCoC = cashLeftIn > 0 ? (refiCashFlow / cashLeftIn) * 100 : (refiCashFlow > 0 ? 999 : 0);
@@ -1066,6 +1101,7 @@ export default function App() {
       hmExitFee, carryOutOfPocket,
       flipCashIn, flipAllIn, flipAnnualizedRoi, flipProfitPctArv, flipAllInPctArv,
       refiLoanAmount, cashOut, cashLeftIn, refiPI, refiCashFlow, brrrCoC,
+      brrrrCarry, brrrrCashIn, brrrrVacantMonths, brrrrRentedMonths,
       mgmt, maint, capex,
       projValue1, projValue5, balAfter1, balAfter5, yr1Principal, yr1Appreciation,
       equityNow, equity1, equity5,
@@ -1078,6 +1114,7 @@ export default function App() {
     };
   }, [purchasePrice, closingCostsPct, rehab, arv, downPct, rate, term, amortYears, advanced, ioYears, cashPurchase, monthlyRent, otherIncomeTotal,
       vacancyPct, propertyTax, insurance, mgmtPct, mgmtRentOnly, maintPct, capexPct, utilities, otherOpexTotal, apprPct,
+      brrrrHoldMonths, brrrrRehabMonths, refiLtvPct,
       deprRate, buildingPct, taxRate, discountRate, noiGrowth, exitCapPct,
       holdingMonths, sellingCostsPct, hmLtcPct, hmArvPct, hmRate, hmPointsPct, hmInterestBasis,
       hmExitFeePct, hmInterestPaid,
@@ -1100,7 +1137,10 @@ export default function App() {
     const mgmt = mgmtBase * (mgmtPct / 100);
     const maint = effRent * 12 * (maintPct / 100);
     const capex = effRent * 12 * (capexPct / 100);
-    const opex = propertyTax + insurance + utilities + mgmt + maint + capex + otherOpexTotal;
+    // On a property already owned, the tax basis is today's value, not a
+    // purchase price from years ago.
+    const propertyTaxHere = taxMode === 'rate' ? currentValue * (taxRatePct / 100) : taxAmount;
+    const opex = propertyTaxHere + insurance + utilities + mgmt + maint + capex + otherOpexTotal;
     const noi = egi - opex;
 
     // All-cash (owned free & clear) zeroes the loan.
@@ -1198,7 +1238,7 @@ export default function App() {
       sellingCosts, adjustedBasis, totalGain, recaptureTax, capGainsTax, totalTaxIfSell, netSaleProceeds,
       redeployReturn, equity1031, newLoan1031, ltv1031, taxesDeferred,
     };
-  }, [monthlyRent, otherIncomeTotal, vacancyPct, mgmtPct, mgmtRentOnly, advanced, maintPct, capexPct, propertyTax, insurance, utilities, otherOpexTotal,
+  }, [monthlyRent, otherIncomeTotal, vacancyPct, mgmtPct, mgmtRentOnly, advanced, maintPct, capexPct, taxMode, taxRatePct, taxAmount, insurance, utilities, otherOpexTotal,
       currentValue, currentBalance, currentRate, yearsRemaining, ioYears, cashPurchase, apprPct, originalBasis, accumDepr,
       buildingPct, deprRate, taxRate, sellingCostsPct, capGainsRate, recaptureRate, stateTaxRate,
       discountRate, replacementCost, noiGrowth, exitCapPct, stressRent, stressVacancy, stressRate]);
@@ -1493,7 +1533,10 @@ export default function App() {
     ];
     if (strategy === 'brrrr') {
       rentalRows.push({ title: 'BRRRR — Post-Refi', rows: [
-        ['Refi Loan (75% ARV)', m(calc.refiLoanAmount)], ['Cash-Out', m(calc.cashOut)],
+        ['Rehab (vacant)', `${brrrrRehabMonths} mo`], ['Months to Refi', `${brrrrHoldMonths} mo`],
+        ['Carry to Refi', m(calc.brrrrCarry)],
+        ['Total Cash In (incl. carry)', m(calc.brrrrCashIn)],
+        [`Refi Loan (${refiLtvPct}% ARV)`, m(calc.refiLoanAmount)], ['Cash-Out', m(calc.cashOut)],
         ['Cash Left In', m(calc.cashLeftIn)], ['Post-Refi CoC', calc.cashLeftIn <= 0 ? '∞' : pct(calc.brrrCoC)],
         ['Equity in Deal', m(arv - calc.refiLoanAmount)] ] });
     }
@@ -1556,6 +1599,26 @@ export default function App() {
   );
 
   // Which calc drives the stress-test IRR/NPV display for the active tab.
+  // Property-tax field: one control, two modes, defined once and rendered on both
+  // the rental and flip panels so the two can never drift apart.
+  const propertyTaxField = taxMode === 'rate' ? (
+    <NumInput label="Property Tax Rate" value={taxRatePct} onChange={setTaxRatePct} suffix="%" step={0.05}
+      tip={`Annual property tax as a share of price, so it tracks the deal instead of staying frozen when you change the purchase price. Works out to ${fmt(propertyTax, { money: true })}/yr here. Switch to a dollar amount if you know the actual bill — and do check it, since reassessment after a sale can move it sharply.`}
+      after={
+        <button onClick={() => setTaxMode('amount')} className="text-[10px] text-orange-400 hover:text-orange-300 mt-1">
+          Use a dollar amount
+        </button>
+      } />
+  ) : (
+    <NumInput label="Property Tax (yr)" value={taxAmount} onChange={setTaxAmount} prefix="$"
+      tip="The actual annual bill from the county assessor. Fixed in dollars — it will NOT follow if you change the purchase price, so re-check it whenever you do."
+      after={
+        <button onClick={() => setTaxMode('rate')} className="text-[10px] text-orange-400 hover:text-orange-300 mt-1">
+          Use % of price
+        </button>
+      } />
+  );
+
   const stressCalc = strategy === 'existing' ? existingCalc : calc;
 
   return (
@@ -1942,8 +2005,7 @@ export default function App() {
                   <Calculator className="w-4 h-4 text-orange-500" /> Operating Expenses
                 </h2>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <NumInput label="Property Tax (yr)" value={propertyTax} onChange={setPropertyTax} prefix="$"
-                    tip="Get this from the county assessor or current listing — don't estimate. Reassessments can spike taxes 20–50% after purchase in some states." />
+                  {propertyTaxField}
                   <NumInput label="Insurance (yr)" value={insurance} onChange={setInsurance} prefix="$"
                     tip="Landlord policies cost more than homeowner. Get an actual quote — premiums have spiked 20–40% in recent years, especially in FL, TX, CA." />
                   <NumInput label="Utilities (yr)" value={utilities} onChange={setUtilities} prefix="$"
@@ -2032,7 +2094,7 @@ export default function App() {
                     tip="From close to close. Most flips take 4–8 months. Pad your estimate — permits and listings always take longer than expected." />
                   <NumInput label="Selling Costs" value={sellingCostsPct} onChange={setSellingCostsPct} suffix="%"
                     tip="Agent commissions (5–6%) + closing costs (1–2%). Total 6–8% of ARV." />
-                  <NumInput label="Property Tax (yr)" value={propertyTax} onChange={setPropertyTax} prefix="$" />
+                  {propertyTaxField}
                   <NumInput label="Insurance (yr)" value={insurance} onChange={setInsurance} prefix="$" />
                   <NumInput label="Utilities (yr)" value={utilities} onChange={setUtilities} prefix="$"
                     tip="Annual total the owner pays while holding the property. Divided by 12 to build the monthly holding cost." />
@@ -2455,9 +2517,24 @@ export default function App() {
             {strategy === 'brrrr' && (
               <div className="bg-gradient-to-br from-orange-950/40 to-red-950/20 border border-orange-800/40 rounded-2xl p-4">
                 <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-orange-300 mb-3">
-                  <RefreshCw className="w-3.5 h-3.5" /> Post-Refi (75% LTV on ARV)
+                  <RefreshCw className="w-3.5 h-3.5" /> Rehab, Season &amp; Refi
                 </h3>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <NumInput label="Rehab (vacant)" value={brrrrRehabMonths} onChange={setBrrrrRehabMonths} suffix="mo"
+                    tip="How long the property sits empty being renovated. No rent comes in, but taxes, insurance, utilities and the mortgage all keep coming out." />
+                  <NumInput label="Months to Refi" value={brrrrHoldMonths} onChange={setBrrrrHoldMonths} suffix="mo"
+                    tip="From closing to the cash-out refinance. Most lenders want 6–12 months of seasoning before they will lend against the new value rather than what you paid. Set this shorter than your rehab and you are assuming a refi before the work is done." />
+                  <NumInput label="Refi LTV" value={refiLtvPct} onChange={setRefiLtvPct} suffix="%" step={5}
+                    tip="Loan-to-value the bank will lend on the after-repair value. 75% is typical for a cash-out refinance on an investment property; some go to 70%." />
+                </div>
                 <div className="grid grid-cols-2 gap-2.5">
+                  <Stat label="Carry to Refi" value={fmt(calc.brrrrCarry, { money: true })}
+                    status={calc.brrrrCarry <= 0 ? 'good' : calc.brrrrCarry < 15000 ? 'neutral' : 'warn'}
+                    sub={`${calc.brrrrVacantMonths} mo vacant${calc.brrrrRentedMonths > 0 ? ` + ${calc.brrrrRentedMonths} mo rented` : ''}`}
+                    tip="Net cash consumed between closing and the refinance: fixed costs and debt service while the property is empty, less any rent collected once it is leased but before the bank refinances. This is the half of a BRRRR people forget." />
+                  <Stat label="Total Cash In" value={fmt(calc.brrrrCashIn, { money: true })}
+                    sub="incl. carry"
+                    tip="Down payment, closing, rehab and the carry to refi — everything you fund before the bank gives any of it back." />
                   <Stat label="Refi Loan" value={fmt(calc.refiLoanAmount, { money: true })} />
                   <Stat label="Cash-Out" value={fmt(calc.cashOut, { money: true })}
                     status={calc.cashOut >= calc.totalCashIn ? 'good' : 'neutral'}
@@ -2470,10 +2547,10 @@ export default function App() {
                   {advanced && (<>
                     <Stat label="Equity in Deal" value={fmt(arv - calc.refiLoanAmount, { money: true })}
                       status={(arv - calc.refiLoanAmount) >= arv * 0.2 ? 'good' : 'warn'}
-                      tip="Your equity after the refinance = ARV − refi loan balance. At 75% LTV you keep ~25% of ARV as equity even after pulling cash out." />
+                      tip={`Your equity after the refinance = ARV − refi loan balance. At ${refiLtvPct}% LTV you keep ${100 - refiLtvPct}% of ARV as equity even after pulling cash out.`} />
                     <Stat label="Equity %" value={fmt(arv > 0 ? ((arv - calc.refiLoanAmount) / arv) * 100 : 0, { pct: true, dec: 0 })}
                       sub="of ARV"
-                      tip="Equity as a share of after-repair value. Lenders cap cash-out refis at ~75% LTV, leaving you ~25% equity." />
+                      tip="Equity as a share of after-repair value. Lenders cap cash-out refis around 70–75% LTV, so this is what stays in the deal." />
                   </>)}
                 </div>
               </div>
