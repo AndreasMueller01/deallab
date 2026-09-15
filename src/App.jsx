@@ -1396,15 +1396,24 @@ export default function App() {
               </div>
             )}
             {IS_EMBEDDED && (
+              // Collapsed, this is the primary action in the header: full window is
+              // a markedly better way to use the analyzer, and slate-on-slate read as
+              // chrome. On phones it takes a full row of its own -- the inline frame
+              // is ~3,250px of app inside a scrolling page there, so the payoff is
+              // biggest exactly where the affordance was easiest to miss.
+              // Expanded, Exit drops back to quiet chrome; leaving is not the action
+              // we are selling.
               <button
                 onClick={toggleExpand}
                 title={expanded ? 'Exit full window (Esc)' : 'Open the analyzer in a full window'}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 hover:text-white hover:border-orange-500/60 transition-colors"
+                className={expanded
+                  ? 'flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-300 hover:text-white hover:border-slate-500 transition-colors'
+                  : 'flex items-center justify-center gap-1.5 w-full sm:w-auto px-3.5 py-2 sm:py-1.5 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 text-white shadow-lg shadow-orange-500/20 hover:from-orange-400 hover:to-red-500 transition-colors'}
               >
                 {expanded
                   ? <Minimize2 className="w-3.5 h-3.5" />
-                  : <Maximize2 className="w-3.5 h-3.5" />}
-                <span className="font-semibold">{expanded ? 'Exit full window' : 'Full window'}</span>
+                  : <Maximize2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />}
+                <span className="font-semibold">{expanded ? 'Exit full window' : 'Open full window'}</span>
               </button>
             )}
           </div>
