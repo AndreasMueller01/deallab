@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Flame, Home, Wrench, TrendingUp, AlertTriangle, CheckCircle2, Info, RefreshCw, DollarSign, Calculator, BarChart3, Sliders, Lock, User, Mail, Phone, ShieldCheck, Clock, ListChecks, ChevronDown, ChevronRight, Printer, ArrowRightLeft, Scale, Building2, FileSpreadsheet, Maximize2, Minimize2 } from 'lucide-react';
 import { openPrintReport, downloadCSV } from './report';
 
@@ -487,9 +487,13 @@ export default function App() {
   // page scrolls; expanded, the parent pins the frame to the viewport and the
   // app scrolls internally again -- which is what makes the sticky header work.
   const [expanded, setExpanded] = useState(false);
+  // Someone who leaves full window has answered the question. Remember it, so
+  // the Advanced Mode hand-off below never drags them back in.
+  const leftFullWindow = useRef(false);
 
   const toggleExpand = () => {
     const next = !expanded;
+    if (!next) leftFullWindow.current = true;
     setExpanded(next);
     postToParent({ type: next ? 'expand' : 'collapse' });
   };
@@ -497,7 +501,7 @@ export default function App() {
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') { setExpanded(false); postToParent({ type: 'collapse' }); }
+      if (e.key === 'Escape') { leftFullWindow.current = true; setExpanded(false); postToParent({ type: 'collapse' }); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -510,7 +514,7 @@ export default function App() {
     const onMsg = (e) => {
       const d = e.data;
       if (!d || d.source !== 'deallab-host') return;
-      if (d.type === 'collapsed') setExpanded(false);
+      if (d.type === 'collapsed') { leftFullWindow.current = true; setExpanded(false); }
       if (d.type === 'expanded') setExpanded(true);
     };
     window.addEventListener('message', onMsg);
@@ -587,11 +591,16 @@ export default function App() {
     try { if (localStorage.getItem('deallab_advanced_v1') === '1') setAdvanced(true); } catch (e) { /* ignore */ }
   }, []);
   const toggleAdvanced = () => {
-    setAdvanced((a) => {
-      const next = !a;
-      try { localStorage.setItem('deallab_advanced_v1', next ? '1' : '0'); } catch (e) { /* ignore */ }
-      return next;
-    });
+    const next = !advanced;
+    try { localStorage.setItem('deallab_advanced_v1', next ? '1' : '0'); } catch (e) { /* ignore */ }
+    setAdvanced(next);
+    // Advanced Mode puts a lot more on screen, so hand the visitor the room to
+    // read it. Only on the way IN, and never against someone who already chose
+    // to leave full window — an explicit exit is an answer, not a state to undo.
+    if (next && IS_EMBEDDED && !expanded && !leftFullWindow.current) {
+      setExpanded(true);
+      postToParent({ type: 'expand' });
+    }
   };
 
   // Live rate (pulled from /rate.json, updated daily by a GitHub Action that scrapes MND)
@@ -1413,7 +1422,7 @@ export default function App() {
                 {expanded
                   ? <Minimize2 className="w-3.5 h-3.5" />
                   : <Maximize2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />}
-                <span className="font-semibold">{expanded ? 'Exit full window' : 'Open full window'}</span>
+                <span className="font-semibold">{expanded ? 'Exit full window' : 'Try it in Full Window!'}</span>
               </button>
             )}
           </div>
