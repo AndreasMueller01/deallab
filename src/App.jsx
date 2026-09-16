@@ -35,6 +35,16 @@ const postToParent = (msg) => {
   catch { /* parent unreachable; nothing to do */ }
 };
 
+// Analytics. The app cannot reach the site's GA4 or Meta pixel -- those live on
+// the parent page, and a tracker on the outer page cannot see inside a frame.
+// So events ride the same postMessage channel the frame already uses and the
+// page forwards them to the tags it has loaded. One set of tags, no second
+// tracker shipped inside the app, and nothing breaks if the app moves hosts.
+//
+// NEVER put personal data in `params`. No name, email, phone or street address
+// goes over this channel -- these are counts and categories only.
+const track = (event, params) => postToParent({ type: 'track', event, params: params || {} });
+
 // Deal Heat Index labels per strategy (cold → on-fire). The endpoints change
 // to fit each strategy's decision: flip = build vs. walk, existing = hold vs. sell.
 const HEAT_LABELS = {
@@ -249,6 +259,7 @@ const Stat = ({ label, value, sub, tip, status }) => {
 
 // ============ LEAD GATE MODAL ============
 const LeadGate = ({ onSuccess }) => {
+  useEffect(() => { track('gate_shown'); }, []);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -313,6 +324,7 @@ const LeadGate = ({ onSuccess }) => {
           }).catch(() => { /* non-fatal — localStorage still covers this session */ });
         } catch (e) { /* ignore */ }
         setStatus('success');
+        track('gate_submitted');   // no field values -- the count is the signal
         setTimeout(() => { cleanup(); onSuccess({ name, email, phone }); }, 1400);
       };
       const fail = () => {
@@ -498,6 +510,15 @@ export default function App() {
   const [accessGranted, setAccessGranted] = useState(false);
   const [gateChecked, setGateChecked] = useState(false);
 
+  // Fired once per load, so the page can tell "landed on /deal-analyzer" apart
+  // from "actually opened the analyzer".
+  const openedSent = useRef(false);
+  useEffect(() => {
+    if (openedSent.current) return;   // StrictMode double-invokes effects in dev
+    openedSent.current = true;
+    track('analyzer_opened');
+  }, []);
+
   // Full-window mode. Collapsed, the frame is as tall as the content and the
   // page scrolls; expanded, the parent pins the frame to the viewport and the
   // app scrolls internally again -- which is what makes the sticky header work.
@@ -510,6 +531,7 @@ export default function App() {
     const next = !expanded;
     if (!next) leftFullWindow.current = true;
     setExpanded(next);
+    if (next) track('full_window_opened');
     postToParent({ type: next ? 'expand' : 'collapse' });
   };
 
@@ -609,6 +631,7 @@ export default function App() {
     const next = !advanced;
     try { localStorage.setItem('deallab_advanced_v1', next ? '1' : '0'); } catch (e) { /* ignore */ }
     setAdvanced(next);
+    if (next) track('advanced_enabled', { strategy });
     // Advanced Mode puts a lot more on screen, so hand the visitor the room to
     // read it. Only on the way IN, and never against someone who already chose
     // to leave full window — an explicit exit is an answer, not a state to undo.
@@ -682,6 +705,19 @@ export default function App() {
     if (propertyType === 'single') return singleRent;
     return unitTypes.reduce((sum, u) => sum + (u.count || 0) * (u.rent || 0), 0);
   }, [propertyType, singleRent, unitTypes]);
+
+  // "Someone is actually working." Fires the first time a headline input moves
+  // off its default, which separates a real session from a bounce — something a
+  // page view can never tell you.
+  const dealTouched = useRef(false);
+  const inputBaseline = useRef(null);
+  useEffect(() => {
+    const snapshot = [purchasePrice, monthlyRent, rehab, arv].join('|');
+    if (inputBaseline.current === null) { inputBaseline.current = snapshot; return; }
+    if (dealTouched.current || snapshot === inputBaseline.current) return;
+    dealTouched.current = true;
+    track('deal_analyzed', { strategy });
+  }, [purchasePrice, monthlyRent, rehab, arv, strategy]);
 
   const totalUnits = useMemo(() => {
     if (propertyType === 'single') return 1;
@@ -1550,8 +1586,10 @@ export default function App() {
     return base;
   };
 
-  const exportPDF = () => openPrintReport(buildPayload());
-  const exportCSV = () => downloadCSV(buildPayload());
+  // The export is the highest-intent moment in the app -- someone has done the
+  // work and wants to keep or share the result.
+  const exportPDF = () => { track('report_exported', { format: 'pdf', strategy }); openPrintReport(buildPayload()); };
+  const exportCSV = () => { track('report_exported', { format: 'csv', strategy }); downloadCSV(buildPayload()); };
 
   // Repeatable "Other Income" line items (monthly $). Rendered in both the
   // single-unit and multifamily branches of the Rental Income section.
@@ -1701,7 +1739,7 @@ export default function App() {
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
-                onClick={() => setStrategy(id)}
+                onClick={() => { setStrategy(id); track('strategy_selected', { strategy: id }); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap ${
                   strategy === id
                     ? 'bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg shadow-orange-500/20'
