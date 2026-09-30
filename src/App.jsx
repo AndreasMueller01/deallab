@@ -740,7 +740,7 @@ export default function App() {
   // tracks the deal; 0.75% reproduces the old $2,400 default at $320k exactly.
   // A dollar amount is still available for someone who knows the actual bill.
   const [taxMode, setTaxMode] = useState('rate');   // 'rate' | 'amount'
-  const [taxRatePct, setTaxRatePct] = useState(0.75);
+  const taxRatePct = 0.75;   // estimate used until the user types an actual bill
   const [taxAmount, setTaxAmount] = useState(2400);
   // Effective annual tax for a purchase-based strategy, and for the Existing tab,
   // where the right basis is what the property is worth now, not what it cost.
@@ -1642,25 +1642,21 @@ export default function App() {
   // Dollar value of the % default, against the same base the math uses:
   // current value on Analyze Existing, purchase price everywhere else.
   const taxRateDollars = strategy === 'existing' ? currentValue * (taxRatePct / 100) : propertyTax;
-  const propertyTaxField = taxMode === 'rate' ? (
-    <NumInput label="Property Tax Rate" value={taxRatePct} onChange={setTaxRatePct} suffix="%" step={0.05}
-      tip={`Annual property tax as a share of ${strategy === 'existing' ? 'current value' : 'price'}, so it tracks the deal instead of staying frozen when you change the ${strategy === 'existing' ? 'value' : 'purchase price'}. Nashville/Davidson County: $2.814 per $100 of assessed value (Urban Services District), and houses are assessed at 25% of appraised value, so the true rate is about 0.70% of value. Compare the dollar figure below to the current tax bill, and switch to a dollar amount if you know the actual bill — reassessment after a sale can move it sharply.`}
-      after={
-        <div className="flex items-center justify-between gap-2 mt-1">
-          <span className="text-[10px] text-slate-400">= {fmt(taxRateDollars, { money: true })}/yr</span>
-          <button onClick={() => setTaxMode('amount')} className="text-[10px] text-orange-400 hover:text-orange-300">
-            Use a dollar amount
-          </button>
-        </div>
-      } />
-  ) : (
-    <NumInput label="Property Tax (yr)" value={taxAmount} onChange={setTaxAmount} prefix="$"
-      tip="The actual annual bill from the county assessor. Fixed in dollars — it will NOT follow if you change the purchase price, so re-check it whenever you do."
-      after={
+  const taxBase = strategy === 'existing' ? 'current value' : 'price';
+  // Always shown in dollars. Until the user types a number it is an estimate at
+  // taxRatePct of price/value and follows it; typing switches to a fixed amount.
+  const propertyTaxField = (
+    <NumInput label="Property Tax (yr)" prefix="$"
+      value={taxMode === 'rate' ? Math.round(taxRateDollars) : taxAmount}
+      onChange={(v) => { setTaxAmount(v); setTaxMode('amount'); }}
+      tip={`Nashville/Davidson County charges $2.814 per $100 of assessed value (Urban Services District), and houses are assessed at 25% of appraised value, so the real bill is about 0.70% of value. The ${taxRatePct}% estimate is slightly conservative. Compare it to the seller's current tax bill and type the real number if you have it. Reassessment after a sale can move it sharply.`}
+      after={taxMode === 'rate' ? (
+        <p className="text-[10px] text-slate-400 mt-1">Est. at {taxRatePct}% of {taxBase}, a conservative Nashville-area rate</p>
+      ) : (
         <button onClick={() => setTaxMode('rate')} className="text-[10px] text-orange-400 hover:text-orange-300 mt-1">
-          Use % of price
+          Reset to {taxRatePct}% estimate
         </button>
-      } />
+      )} />
   );
 
   const stressCalc = strategy === 'existing' ? existingCalc : calc;
