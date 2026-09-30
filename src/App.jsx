@@ -654,7 +654,7 @@ export default function App() {
   // Property
   const [address, setAddress] = useState('');
   const [purchasePrice, setPurchasePrice] = useState(320000);
-  const [closingCostsPct, setClosingCostsPct] = useState(1.5);   // guide: 1.5-3% typical
+  const [closingCostsPct, setClosingCostsPct] = useState(1);     // guide: 1-3% typical
   const [rehab, setRehab] = useState(0);   // rentals start clean; the flip tab seeds its own
   const [arv, setArv] = useState(480000);
   const [apprPct, setApprPct] = useState(3); // annual appreciation, compounded
@@ -699,7 +699,7 @@ export default function App() {
   const otherIncomeTotal = useMemo(
     () => otherIncomes.reduce((s, x) => s + (Number(x.amount) || 0), 0), [otherIncomes]); // $/mo
 
-  const [vacancyPct, setVacancyPct] = useState(7);     // guide: 5-10%, and warns below 5%
+  const [vacancyPct, setVacancyPct] = useState(5);     // guide: 5-10%, and warns below 5%
 
   const monthlyRent = useMemo(() => {
     if (propertyType === 'single') return singleRent;
@@ -754,7 +754,7 @@ export default function App() {
   // exclude laundry/parking/storage revenue from the management fee.
   const [mgmtRentOnly, setMgmtRentOnly] = useState(false);
   const [maintPct, setMaintPct] = useState(5);
-  const [capexPct, setCapexPct] = useState(6);         // a zero reserve is how a proforma hides a roof
+  const [capexPct, setCapexPct] = useState(0);         // default 0 per Andreas; tip still recommends 5-10%
   const [utilities, setUtilities] = useState(0); // annual $ (owner-paid utilities)
   // User-defined extra operating expenses (annual $). Used by rental strategies.
   const [otherExpenses, setOtherExpenses] = useState([]); // [{id, label, amount}]
