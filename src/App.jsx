@@ -1651,7 +1651,7 @@ export default function App() {
       onChange={(v) => { setTaxAmount(v); setTaxMode('amount'); }}
       tip={`Nashville/Davidson County charges $2.814 per $100 of assessed value (Urban Services District), and houses are assessed at 25% of appraised value, so the real bill is about 0.70% of value. The ${taxRatePct}% estimate is slightly conservative. Compare it to the seller's current tax bill and type the real number if you have it. Reassessment after a sale can move it sharply.`}
       after={taxMode === 'rate' ? (
-        <p className="text-[10px] text-slate-400 mt-1">Est. at {taxRatePct}% of {taxBase}, a conservative Nashville-area rate</p>
+        <p className="text-[10px] text-slate-400 mt-1">Estimated at {taxRatePct}% of {taxBase}, based on Nashville-area tax rate.</p>
       ) : (
         <button onClick={() => setTaxMode('rate')} className="text-[10px] text-orange-400 hover:text-orange-300 mt-1">
           Reset to {taxRatePct}% estimate
