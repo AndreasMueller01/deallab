@@ -1639,13 +1639,19 @@ export default function App() {
   // Which calc drives the stress-test IRR/NPV display for the active tab.
   // Property-tax field: one control, two modes, defined once and rendered on both
   // the rental and flip panels so the two can never drift apart.
+  // Dollar value of the % default, against the same base the math uses:
+  // current value on Analyze Existing, purchase price everywhere else.
+  const taxRateDollars = strategy === 'existing' ? currentValue * (taxRatePct / 100) : propertyTax;
   const propertyTaxField = taxMode === 'rate' ? (
     <NumInput label="Property Tax Rate" value={taxRatePct} onChange={setTaxRatePct} suffix="%" step={0.05}
-      tip={`Annual property tax as a share of price, so it tracks the deal instead of staying frozen when you change the purchase price. Works out to ${fmt(propertyTax, { money: true })}/yr here. Switch to a dollar amount if you know the actual bill — and do check it, since reassessment after a sale can move it sharply.`}
+      tip={`Annual property tax as a share of ${strategy === 'existing' ? 'current value' : 'price'}, so it tracks the deal instead of staying frozen when you change the ${strategy === 'existing' ? 'value' : 'purchase price'}. Nashville/Davidson County: $2.814 per $100 of assessed value (Urban Services District), and houses are assessed at 25% of appraised value, so the true rate is about 0.70% of value. Compare the dollar figure below to the current tax bill, and switch to a dollar amount if you know the actual bill — reassessment after a sale can move it sharply.`}
       after={
-        <button onClick={() => setTaxMode('amount')} className="text-[10px] text-orange-400 hover:text-orange-300 mt-1">
-          Use a dollar amount
-        </button>
+        <div className="flex items-center justify-between gap-2 mt-1">
+          <span className="text-[10px] text-slate-400">= {fmt(taxRateDollars, { money: true })}/yr</span>
+          <button onClick={() => setTaxMode('amount')} className="text-[10px] text-orange-400 hover:text-orange-300">
+            Use a dollar amount
+          </button>
+        </div>
       } />
   ) : (
     <NumInput label="Property Tax (yr)" value={taxAmount} onChange={setTaxAmount} prefix="$"
