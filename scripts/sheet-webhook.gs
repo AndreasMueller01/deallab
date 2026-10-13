@@ -126,7 +126,7 @@ function cell_(v) {
 function notifyExport_(row) {
   const to = NOTIFY_EMAIL || Session.getEffectiveUser().getEmail();
   if (!to) return;
-  const money = (n) => (n === '' || n === undefined) ? '' : '$' + Math.round(Number(n)).toLocaleString('en-US');
+  const money = (n) => (n === '' || n === undefined) ? '' : (Number(n) < 0 ? '-$' : '$') + String(Math.abs(Math.round(Number(n)))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const strat = { buyhold: 'Buy & Hold', brrrr: 'BRRRR', flip: 'Fix & Flip', existing: 'Existing property' }[row.strategy] || row.strategy;
   const who = row.name || row.email || 'An anonymous visitor';
   const where = row.address || (row.zip ? 'ZIP ' + row.zip : 'no address given');
@@ -208,7 +208,7 @@ function dealsByLead_() {
 // $340,000, rent $2,800/mo, CoC 4.1%, Deal Heat 41 COOL [exported PDF]; ..."
 function dealNotes_(rows) {
   if (!rows.length) return 'DealLab: signed up, no property analysed in the first ' + COMMAND_DELAY_MIN + ' minutes. See the DealLab sheet for later activity.';
-  const money = (n) => (n === '' || n === undefined || n === null) ? '' : '$' + Math.round(Number(n)).toLocaleString('en-US');
+  const money = (n) => (n === '' || n === undefined || n === null) ? '' : (Number(n) < 0 ? '-$' : '$') + String(Math.abs(Math.round(Number(n)))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const strat = { buyhold: 'Buy & Hold', brrrr: 'BRRRR', flip: 'Fix & Flip', existing: 'Existing property' };
   const byKey = {};
   rows.forEach((d) => {
