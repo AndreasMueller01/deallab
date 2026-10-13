@@ -129,8 +129,14 @@ separately and joined by an opaque lead id.
   `commandStatus`/`processedAt` BEFORE emailing so a lead is never emailed twice. It also
   handles every Deals row with trigger pdf/csv and an empty `commandStatus` (export = buying
   signal: update the contact, tag "DealLab Export", add a follow-up task). Never write a
-  second To Command row for a lead. Backfilled (pre-2026-10-13) leads are not queued; the 38
-  real ones were imported to Command by CSV.
+  second To Command row for a lead. Backfilled (pre-2026-10-13) leads are not queued. Of the 38
+  real ones: 11 already existed in Command (tagged "DealLab" by hand), 2 other-brokerage agents
+  dropped, 25 added with tags NEW, Cultivate - Follow up, DealLab, "DealLab pre-Oct13".
+  Command CSV import gotchas: tags must be COMMA-separated (semicolons become one tag), the
+  Notes column is silently dropped, re-uploading the same file name is refused, rows can fail
+  for no stated reason (9 of 25 did; create those by hand), a phone match merges into the
+  existing contact, the search index lags new contacts by minutes (filter by tag instead), and
+  every Import Contacts click demands a KW step-up code that only Andreas can enter.
 - **Live setup (2026-10-13):** Apps Script project bound to the sheet, deployed as a web
   app (Execute as Andreas, access Anyone). To change the script: edit, save, then Deploy →
   Manage deployments → Edit → Version: **New version** (keeps the same /exec URL). Web-app
