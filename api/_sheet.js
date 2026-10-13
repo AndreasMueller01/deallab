@@ -72,7 +72,7 @@ export const forwardToSheet = async (tab, row) => {
   const secret = process.env.SHEET_WEBHOOK_SECRET;
   if (!url || !secret) return false;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), 15000);   // Apps Script cold starts can take ~8s
   try {
     const res = await fetch(url, {
       method: 'POST',

@@ -50,7 +50,9 @@ const COMMAND_DELAY_MIN = 30;
 function doPost(e) {
   let body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return reply_(false, 'bad json'); }
-  if (!body || body.secret !== SECRET) return reply_(false, 'forbidden');
+  // Tolerate stray quotes/whitespace from copy-pasting the secret into Vercel.
+  const got = String((body && body.secret) || '').trim().replace(/^['"]+|['"]+$/g, '');
+  if (got !== SECRET) return reply_(false, 'forbidden');
   const tab = body.tab;
   if (!HEADERS[tab] || typeof body.row !== 'object') return reply_(false, 'bad tab');
 

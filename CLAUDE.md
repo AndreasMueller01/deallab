@@ -128,3 +128,9 @@ separately and joined by an opaque lead id.
   Spreadsheet Row" trigger on that tab creates the Command contact. Never write a second
   row for a lead — it would be a duplicate contact. Backfilled leads are not sent (they
   predate this and likely reached Command already).
+- **Live setup (2026-10-13):** Apps Script project bound to the sheet, deployed as a web
+  app (Execute as Andreas, access Anyone). To change the script: edit, save, then Deploy →
+  Manage deployments → Edit → Version: **New version** (keeps the same /exec URL). Web-app
+  `console.log` from anonymous callers does NOT show in Executions — log to a sheet tab if
+  you need to debug. `api/deal`'s `{ok}` only means Google answered 200; a secret mismatch
+  also answers 200 (`{ok:false,error:'forbidden'}` in the body), so verify by checking the sheet.
