@@ -121,13 +121,16 @@ separately and joined by an opaque lead id.
 - Testing headlessly: use Playwright's `wait_for_timeout`, not `time.sleep` — a blocked
   sync client stalls the page's network while a route is installed, which looks exactly
   like the debounce or cookies failing.
-- **KW Command:** no public API; its Zapier app has only "Create Contact or Lead" (no
-  update, no search, no triggers). So `queueForCommand` (15-min timer from `setup`)
-  writes ONE row per `gate` lead to the **To Command** tab once the lead is 30 min old,
-  with their analysed deals summarised in `notes`; a Zapier Google Sheets "New
-  Spreadsheet Row" trigger on that tab creates the Command contact. Never write a second
-  row for a lead — it would be a duplicate contact. Backfilled leads are not sent (they
-  predate this and likely reached Command already).
+- **KW Command:** no public API, and its Zapier app can only create contacts. So a Chrome-driven
+  scheduled task ("DealLab lead processor", companion to Andreas's "Bp lead processor") is
+  the bridge. `queueForCommand` (15-min timer from `setup`) writes ONE row per `gate` lead to
+  **To Command** once it is 30 min old, deals summarised in `notes`. The task creates the
+  Command contact (tag NEW), sends a DealLab welcome email, adds to Substack, and writes
+  `commandStatus`/`processedAt` BEFORE emailing so a lead is never emailed twice. It also
+  handles every Deals row with trigger pdf/csv and an empty `commandStatus` (export = buying
+  signal: update the contact, tag "DealLab Export", add a follow-up task). Never write a
+  second To Command row for a lead. Backfilled (pre-2026-10-13) leads are not queued; the 38
+  real ones were imported to Command by CSV.
 - **Live setup (2026-10-13):** Apps Script project bound to the sheet, deployed as a web
   app (Execute as Andreas, access Anyone). To change the script: edit, save, then Deploy →
   Manage deployments → Edit → Version: **New version** (keeps the same /exec URL). Web-app

@@ -35,11 +35,15 @@ const HEADERS = {
   Deals: ['timestamp', 'leadId', 'name', 'email', 'trigger', 'strategy', 'address', 'zip',
     'price', 'rentMo', 'units', 'propertyType', 'rehab', 'arv', 'downPct', 'rate', 'allCash',
     'loanBalance', 'otherIncomeMo', 'cashFlowMo', 'cashOnCash', 'capRate', 'dscr',
-    'flipProfit', 'flipRoi', 'equity', 'heatScore', 'heatLabel', 'advanced', 'sessionId'],
-  // Zapier watches this tab ("New Spreadsheet Row") and creates the KW Command
-  // contact. One row per lead, ever: Command's Zapier action can only create,
-  // never update, so a second row would be a duplicate contact.
-  'To Command': ['queuedAt', 'leadId', 'firstName', 'lastName', 'email', 'phone', 'source', 'notes'],
+    'flipProfit', 'flipRoi', 'equity', 'heatScore', 'heatLabel', 'advanced', 'sessionId',
+    // Filled by the 'DealLab lead processor' scheduled task, never by this script.
+    'commandStatus'],
+  // The 'DealLab lead processor' scheduled task reads this tab and creates the KW
+  // Command contact (Command has no API). One row per lead, ever: a second row
+  // would mean a duplicate contact and a second welcome email.
+  'To Command': ['queuedAt', 'leadId', 'firstName', 'lastName', 'email', 'phone', 'source', 'notes',
+    // Filled by the 'DealLab lead processor' scheduled task, never by this script.
+    'commandStatus', 'processedAt'],
 };
 
 // How long a new lead waits before going to Command, so the contact arrives with
@@ -233,6 +237,17 @@ function dealNotes_(rows) {
     (exports ? ' (' + exports + ' exported)' : '') + '. ' + parts.join(' | ');
 }
 
+/** Appends any HEADERS missing from row 1 (sheets created before a column was added). */
+function ensureHeaders_(tab) {
+  const sh = sheet_(tab);
+  const have = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0].filter(String);
+  const missing = HEADERS[tab].filter((k) => have.indexOf(k) === -1);
+  if (!missing.length) return;
+  const need = have.length + missing.length - sh.getMaxColumns();
+  if (need > 0) sh.insertColumnsAfter(sh.getMaxColumns(), need);
+  sh.getRange(1, have.length + 1, 1, missing.length).setValues([missing]).setFontWeight('bold');
+}
+
 function sheet_(tab) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(tab);
@@ -266,6 +281,7 @@ function setup() {
     'max(H) \'A ZIP\', max(I) \'Top price\'", 1)');
   act.setFrozenRows(1);
   sheet_('To Command');
+  ['Leads', 'Deals', 'To Command'].forEach(ensureHeaders_);
   if (!ScriptApp.getProjectTriggers().some((t) => t.getHandlerFunction() === 'queueForCommand')) {
     ScriptApp.newTrigger('queueForCommand').timeBased().everyMinutes(15).create();
   }
