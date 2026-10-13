@@ -320,7 +320,7 @@ const LeadGate = ({ onSuccess }) => {
           fetch('/api/lead', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, email, phone }),
+            body: JSON.stringify({ name, email, phone, source: 'gate', referrer: document.referrer || '' }),
           }).catch(() => { /* non-fatal — localStorage still covers this session */ });
         } catch (e) { /* ignore */ }
         setStatus('success');
@@ -477,7 +477,7 @@ const LeadGate = ({ onSuccess }) => {
 
           <div className="flex items-start gap-2 text-[11px] text-slate-500 leading-relaxed pt-1">
             <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-emerald-500" />
-            <span>We respect your inbox. Your info is used only for occasional updates from us — never sold or shared. Unsubscribe anytime.</span>
+            <span>We respect your inbox. Your info and the deals you analyze go only to Andreas Mueller, a licensed Tennessee broker, so he can send updates and properties that fit — never sold or shared. Unsubscribe anytime.</span>
           </div>
         </div>
         )}
@@ -609,10 +609,24 @@ export default function App() {
       }
     } catch (e) { /* ignore */ }
 
-    // Upgrade path: a user we already captured (localStorage) but who has no
-    // durable cookie yet — set one now so they stop getting re-prompted.
-    if (granted && !hasLeadCookie) {
-      fetch('/api/lead', { method: 'POST' }).catch(() => { /* non-fatal */ });
+    // Upgrade path: a user we already captured but who has no durable cookie or
+    // no lead id yet (captured before 2026-10-13). One POST fixes both, and when we
+    // still hold their contact details it writes their row to the Leads tab so the
+    // deals they run from now on are tied to a name.
+    const hasLeadId = document.cookie.split(';').some((c) => {
+      const t = c.trim();
+      return t.startsWith('deallab_lid=') || t.startsWith('deallab_lid_p=');
+    });
+    if (granted && (!hasLeadCookie || !hasLeadId)) {
+      let stored = null;
+      try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { /* ignore */ }
+      fetch('/api/lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stored && stored.email
+          ? { name: stored.name, email: stored.email, phone: stored.phone, source: 'backfill' }
+          : {}),
+      }).catch(() => { /* non-fatal */ });
     }
 
     setAccessGranted(granted);
@@ -1586,10 +1600,117 @@ export default function App() {
     return base;
   };
 
+  // ============ DEAL SNAPSHOTS -> Google Sheet (via /api/deal) ============
+  // The lead gate captures the person before they have entered anything, so the
+  // deal itself is sent separately, keyed to them by the `deallab_lid` cookie.
+  // Unlike `track()` above, this DOES carry the address -- it goes to our own
+  // endpoint, not to third-party analytics, and the gate discloses it.
+  const dealSnapshot = () => {
+    const isExisting = strategy === 'existing';
+    const isFlip = strategy === 'flip';
+    const zips = address.match(/\b\d{5}\b/g);
+    return {
+      strategy,
+      address: address.trim(),
+      zip: zips ? zips[zips.length - 1] : '',
+      propertyType,
+      units: totalUnits,
+      price: isExisting ? currentValue : purchasePrice,
+      rentMo: isFlip ? '' : monthlyRent,
+      otherIncomeMo: isFlip ? '' : otherIncomeTotal,
+      rehab: isExisting ? '' : rehab,
+      arv: (isFlip || strategy === 'brrrr') ? arv : '',
+      downPct: (cashPurchase || isExisting) ? '' : downPct,
+      rate: isExisting ? currentRate : rate,
+      allCash: cashPurchase,
+      loanBalance: isExisting && !cashPurchase ? currentBalance : '',
+      cashFlowMo: isFlip ? '' : (isExisting ? existingCalc.cashFlow / 12 : calc.monthlyCashFlow),
+      cashOnCash: (isFlip || isExisting) ? '' : calc.cashOnCash,
+      capRate: isFlip ? '' : (isExisting ? existingCalc.capRate : calc.capRate),
+      dscr: isFlip || cashPurchase ? '' : (isExisting ? existingCalc.dscr : calc.dscr),
+      flipProfit: isFlip ? calc.flipProfit : '',
+      flipRoi: isFlip ? calc.flipRoi : '',
+      equity: isExisting ? existingCalc.equity : '',
+      heatScore: Math.round(heat.score),
+      heatLabel: heat.label,
+      advanced,
+    };
+  };
+  // Same property = same strategy, address and (rounded) price and rent. Tweaking
+  // vacancy or the rate on the same house does not log a new row; a new house does.
+  const dealKey = (d) => [d.strategy, d.address.toLowerCase(), Math.round((Number(d.price) || 0) / 1000),
+    Math.round((Number(d.rentMo) || 0) / 25)].join('|');
+
+  const [sessionId] = useState(() => Math.random().toString(36).slice(2, 10));
+  const sessionIdRef = useRef(sessionId);
+  const lastSentKey = useRef('');
+  const autoSentCount = useRef(0);
+  const MAX_AUTO_SNAPSHOTS = 25;       // per page load -- a runaway loop can't flood the sheet
+
+  const postDeal = (trigger, deal) => {
+    let email = '';
+    try { email = (JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {}).email || ''; } catch { /* ignore */ }
+    try {
+      fetch('/api/deal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trigger, sessionId: sessionIdRef.current, email, deal }),
+        keepalive: true,                // survives the page being closed mid-request
+      }).catch(() => { /* non-fatal */ });
+    } catch { /* ignore */ }
+  };
+
+  function sendDealSnapshot(trigger) {
+    const deal = dealSnapshot();
+    lastSentKey.current = dealKey(deal);   // an export also counts as "this property is logged"
+    postDeal(trigger, deal);
+  }
+
+  // Latest snapshot for the debounce/pagehide paths, which run outside render.
+  const latestDeal = useRef(null);
+  useEffect(() => { latestDeal.current = accessGranted ? dealSnapshot : null; });
+  const flushAuto = () => {
+    if (!latestDeal.current || autoSentCount.current >= MAX_AUTO_SNAPSHOTS) return;
+    const deal = latestDeal.current();
+    const key = dealKey(deal);
+    if (key === lastSentKey.current) return;
+    lastSentKey.current = key;
+    autoSentCount.current += 1;
+    postDeal('auto', deal);
+  };
+
+  // Auto snapshot: only once a headline input has moved off its default (the
+  // defaults alone are not anyone's deal), then after 20s without edits.
+  const snapBaseline = useRef(null);
+  const snapTouched = useRef(false);
+  const pendingSnap = useRef(false);
+  const snapInputs = [strategy, address.trim(), purchasePrice, monthlyRent, rehab, arv, currentValue].join('|');
+  useEffect(() => {
+    if (!accessGranted) return;
+    const fields = snapInputs.split('|').slice(1).join('|');   // ignore strategy for "touched"
+    if (snapBaseline.current === null) { snapBaseline.current = fields; return; }
+    if (!snapTouched.current && fields === snapBaseline.current) return;
+    snapTouched.current = true;
+    pendingSnap.current = true;
+    const t = setTimeout(() => { pendingSnap.current = false; flushAuto(); }, 20000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapInputs, accessGranted]);
+
+  // Leaving with an unsent change: send it now instead of losing it.
+  useEffect(() => {
+    const onHide = () => { if (pendingSnap.current) { pendingSnap.current = false; flushAuto(); } };
+    const onVis = () => { if (document.visibilityState === 'hidden') onHide(); };
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('pagehide', onHide); document.removeEventListener('visibilitychange', onVis); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // The export is the highest-intent moment in the app -- someone has done the
   // work and wants to keep or share the result.
-  const exportPDF = () => { track('report_exported', { format: 'pdf', strategy }); openPrintReport(buildPayload()); };
-  const exportCSV = () => { track('report_exported', { format: 'csv', strategy }); downloadCSV(buildPayload()); };
+  const exportPDF = () => { track('report_exported', { format: 'pdf', strategy }); sendDealSnapshot('pdf'); openPrintReport(buildPayload()); };
+  const exportCSV = () => { track('report_exported', { format: 'csv', strategy }); sendDealSnapshot('csv'); downloadCSV(buildPayload()); };
 
   // Repeatable "Other Income" line items (monthly $). Rendered in both the
   // single-unit and multifamily branches of the Rental Income section.

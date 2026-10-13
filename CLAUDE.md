@@ -97,3 +97,34 @@ Element ids take `component` = the page id. Embed HTML is the `code` setting, re
 with `data_element_settings_tool`. The site's heading and text classes all ship with
 `margin: 0` — fix spacing with page-scoped CSS keyed off a dom id, never by editing the
 global classes. Publishing goes live on the real site: ask first, every time.
+
+## Deal snapshots -> Google Sheet (2026-10-13)
+
+The gate captures the person before they have entered a deal, so the deal is sent
+separately and joined by an opaque lead id.
+
+- `api/lead.js` POST also issues `deallab_lid` (+ partitioned `deallab_lid_p`), a
+  random UUID — still no PII in cookies — and writes a **Leads** row when the body has
+  contact details. `source: 'gate'` on submit; `'backfill'` when a visitor captured
+  before lead ids existed loads the app (client sends their localStorage details once).
+- `api/deal.js` writes a **Deals** row. Triggers: `auto` (a headline input moved off its
+  default, then 20s without edits; flushed on `pagehide`/tab hide if pending),
+  `pdf`/`csv` on export. Re-sends only when strategy/address/price/rent change; max 25
+  auto rows per page load.
+- Both forward through `api/_sheet.js` to the Apps Script in `scripts/sheet-webhook.gs`,
+  bound to the "DealLab Leads & Deals" sheet. Env vars: `SHEET_WEBHOOK_URL`,
+  `SHEET_WEBHOOK_SECRET`. Unset = silent no-op. The script fills missing name/email on
+  Deals rows from Leads by leadId (covers Safari-evicted localStorage), de-dupes
+  backfills by email, neutralises `=`-prefixed input, and emails Andreas on exports.
+- Unlike `track()`, snapshots DO carry the address. They go to our endpoint, not
+  analytics, and the gate copy discloses it — keep the disclosure if you touch the gate.
+- Testing headlessly: use Playwright's `wait_for_timeout`, not `time.sleep` — a blocked
+  sync client stalls the page's network while a route is installed, which looks exactly
+  like the debounce or cookies failing.
+- **KW Command:** no public API; its Zapier app has only "Create Contact or Lead" (no
+  update, no search, no triggers). So `queueForCommand` (15-min timer from `setup`)
+  writes ONE row per `gate` lead to the **To Command** tab once the lead is 30 min old,
+  with their analysed deals summarised in `notes`; a Zapier Google Sheets "New
+  Spreadsheet Row" trigger on that tab creates the Command contact. Never write a second
+  row for a lead — it would be a duplicate contact. Backfilled leads are not sent (they
+  predate this and likely reached Command already).

@@ -28,26 +28,56 @@
 // Neither cookie is HttpOnly, so the client can read them on load without a
 // round-trip; durability comes from being server-set, not from HttpOnly. They hold
 // no PII — just a "1" flag. The actual lead data still goes to Jotform as before.
+//
+// Lead ID (2026-10-13): POST also issues `deallab_lid` (+ partitioned twin
+// `deallab_lid_p`), a random opaque id — still no PII in any cookie. It is the
+// join key between the Leads and Deals tabs of the Google Sheet: /api/deal reads
+// it so every analysed property is tied to the person who ran it, even after
+// Safari has evicted localStorage. When the POST carries contact details, a row
+// is written to the Leads tab. `source` is 'gate' for a fresh submission and
+// 'backfill' for a visitor captured before lead IDs existed.
+
+import { forwardToSheet, readCookie, readJson, readLeadId, originOk, str, LID, LID_PARTITIONED } from './_sheet.js';
 
 const COOKIE = 'deallab_lead';
 const COOKIE_PARTITIONED = 'deallab_lead_p';
 const MAX_AGE = 60 * 60 * 24 * 400; // 400 days — the practical browser cap.
 
-const hasLeadCookie = (req) => {
-  const jar = (req.headers.cookie || '').split(';').map((c) => c.trim());
-  return jar.some(
-    (c) => c.startsWith(`${COOKIE}=`) || c.startsWith(`${COOKIE_PARTITIONED}=`)
-  );
-};
+const hasLeadCookie = (req) =>
+  !!(readCookie(req, COOKIE) || readCookie(req, COOKIE_PARTITIONED));
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store'); // per-user; never cache.
 
   if (req.method === 'POST') {
+    if (!originOk(req)) { res.status(403).json({ ok: false }); return; }
+    const body = await readJson(req);
+    const existing = readLeadId(req);
+    const leadId = existing || crypto.randomUUID();
+
     res.setHeader('Set-Cookie', [
       `${COOKIE}=1; Max-Age=${MAX_AGE}; Path=/; SameSite=Lax; Secure`,
       `${COOKIE_PARTITIONED}=1; Max-Age=${MAX_AGE}; Path=/; SameSite=None; Secure; Partitioned`,
+      `${LID}=${leadId}; Max-Age=${MAX_AGE}; Path=/; SameSite=Lax; Secure`,
+      `${LID_PARTITIONED}=${leadId}; Max-Age=${MAX_AGE}; Path=/; SameSite=None; Secure; Partitioned`,
     ]);
+
+    const email = str(body.email, 200);
+    const source = body.source === 'backfill' ? 'backfill' : 'gate';
+    // A backfill only logs once per device: if this browser already had a lead
+    // id, its Leads row already exists.
+    const shouldLog = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !(source === 'backfill' && existing);
+    if (shouldLog) {
+      await forwardToSheet('Leads', {
+        timestamp: new Date().toISOString(),
+        leadId,
+        name: str(body.name, 120),
+        email,
+        phone: str(body.phone, 40),
+        source,
+        referrer: str(body.referrer, 300),
+      });
+    }
     res.status(200).json({ ok: true });
     return;
   }
