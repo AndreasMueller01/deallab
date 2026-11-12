@@ -49,7 +49,15 @@ const HEADERS = {
 // How long a new lead waits before going to Command, so the contact arrives with
 // the properties they analysed instead of a bare name. Backfilled leads (captured
 // before 2026-10-13, very likely already in Command via Jotform) are not sent.
+//
+// The wait is measured from the lead's LAST activity (signup or latest analysis),
+// not from signup: someone still running numbers at minute 31 is not queued yet,
+// so a late address still decides their welcome track. COMMAND_MAX_WAIT_MIN caps
+// it, so a visitor who leaves the tab open and keeps tinkering is still queued.
+// The processor only runs at 7:52, 12:52 and 17:52 CT, so the extra wait rarely
+// delays the welcome email at all.
 const COMMAND_DELAY_MIN = 30;
+const COMMAND_MAX_WAIT_MIN = 240;
 
 function doPost(e) {
   let body;
@@ -170,12 +178,16 @@ function queueForCommand() {
     const col = (k) => hdr.indexOf(k);
     if (col('commandQueued') === -1) return;
     const data = leads.getRange(2, 1, last - 1, hdr.length).getValues();
-    const cutoff = Date.now() - COMMAND_DELAY_MIN * 60000;
+    const now = Date.now();
+    const cutoff = now - COMMAND_DELAY_MIN * 60000;
     const deals = dealsByLead_();
     data.forEach((r, i) => {
       if (r[col('commandQueued')] || r[col('source')] !== 'gate') return;
       const ts = new Date(r[col('timestamp')]).getTime();
       if (!(ts <= cutoff)) return;
+      // Still active? Wait until 30 min after their latest analysis, up to the cap.
+      const lastDeal = (deals[r[col('leadId')]] || []).reduce((m, d) => Math.max(m, time_(d.timestamp)), 0);
+      if (lastDeal > cutoff && now - ts < COMMAND_MAX_WAIT_MIN * 60000) return;
       const name = String(r[col('name')] || '').trim().split(/\s+/);
       appendRow_('To Command', {
         queuedAt: new Date().toISOString(),
@@ -192,6 +204,12 @@ function queueForCommand() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Sheet cells come back as Date objects or ISO strings depending on formatting.
+function time_(v) {
+  const t = new Date(v).getTime();
+  return isNaN(t) ? 0 : t;
 }
 
 function dealsByLead_() {
@@ -211,7 +229,7 @@ function dealsByLead_() {
 // "DealLab: 2 properties analysed (1 exported). Buy & Hold — 500 Test St, 37206 —
 // $340,000, rent $2,800/mo, CoC 4.1%, Deal Heat 41 COOL [exported PDF]; ..."
 function dealNotes_(rows) {
-  if (!rows.length) return 'DealLab: signed up, no property analysed in the first ' + COMMAND_DELAY_MIN + ' minutes. See the DealLab sheet for later activity.';
+  if (!rows.length) return 'DealLab: signed up, no property analysed. See the DealLab sheet for later activity.';
   const money = (n) => (n === '' || n === undefined || n === null) ? '' : (Number(n) < 0 ? '-$' : '$') + String(Math.abs(Math.round(Number(n)))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const strat = { buyhold: 'Buy & Hold', brrrr: 'BRRRR', flip: 'Fix & Flip', existing: 'Existing property' };
   const byKey = {};
@@ -220,9 +238,12 @@ function dealNotes_(rows) {
     const prev = byKey[k];
     byKey[k] = Object.assign({}, prev || {}, d, { exported: (prev && prev.exported) || (d.trigger !== 'auto' ? d.trigger : '') });
   });
-  const uniq = Object.values(byKey);
+  // Most recently analysed first: the processor routes the welcome on the FIRST
+  // property listed. (Insertion order would put a property re-run later at its
+  // first-seen position.)
+  const uniq = Object.values(byKey).sort((a, b) => time_(b.timestamp) - time_(a.timestamp));
   const exports = uniq.filter((d) => d.exported).length;
-  const parts = uniq.slice(-5).reverse().map((d) => [
+  const parts = uniq.slice(0, 5).map((d) => [
     strat[d.strategy] || d.strategy,
     d.address || (d.zip ? 'ZIP ' + d.zip : 'no address'),
     money(d.price),
